@@ -1,5 +1,6 @@
 # adesk-pro
 
+Also listed on [Agensi](https://www.agensi.io/skills/adesk-pro) — the agent skill marketplace.
 **Desktop use for AI agents on Windows** — read and operate native apps through the OS accessibility tree. No screenshots, no pixel matching, no vision model in the loop.
 
 English | [简体中文](README.zh-CN.md)

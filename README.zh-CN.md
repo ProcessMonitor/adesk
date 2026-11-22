@@ -1,5 +1,6 @@
 # adesk-pro
 
+已上架 [Agensi](https://www.agensi.io/skills/adesk-pro) 技能市场。
 **给 AI agent 用的 Windows 桌面操作工具** — 通过操作系统无障碍树读写原生应用。不截图、不做像素匹配、循环里没有视觉模型。
 
 [English](README.md) | 简体中文
