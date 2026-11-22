@@ -58,6 +58,7 @@ Tool names match the CLI commands. Results return full `structuredContent` plus 
 
 Highlights:
 
+- `click` on an element without clickable patterns falls back to an element-center mouse click.
 - `snapshot --root @snap:eN` re-drills one subtree of a previous snapshot; refs inside it are re-issued with composed scope paths, everything outside stays valid.
 - `wait` polls until a window appears or a ref turns `enabled` / `visible` / `gone` — no fixed sleeps in agent scripts.
 - `batch` runs several commands through one process, with `stop-on-error`.
@@ -82,7 +83,7 @@ A just-freed ref index is never reused after a drill, so an old ref cannot silen
 
 ## Roadmap
 
-- [ ] element-relative headed clicks (click on a ref's coordinates when patterns are missing)
+
 - [ ] screenshot diffing between two snapshots
 - [ ] parallel MCP dispatch
 - [ ] COM-level per-call timeouts

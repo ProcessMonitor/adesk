@@ -416,7 +416,11 @@ public static partial class Handlers
             ["role"] = n.Role,
             ["name"] = n.Name,
         };
-        if (n.Ref is not null) o["ref"] = n.Ref;
+        if (n.Ref is not null)
+        {
+            o["ref"] = n.Ref;
+            o["rect"] = new JsonObject { ["x"] = n.Rect.X, ["y"] = n.Rect.Y, ["w"] = n.Rect.W, ["h"] = n.Rect.H };
+        }
         if (n.Patterns.Count > 0) o["patterns"] = new JsonArray([.. n.Patterns.Select(p => JsonValue.Create(p))]);
         if (skeleton && n.SkeletonCut) { o["childrenCount"] = n.ChildCount; return o; }
         if (n.Children.Count > 0)

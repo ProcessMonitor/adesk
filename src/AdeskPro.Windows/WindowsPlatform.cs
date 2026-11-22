@@ -149,7 +149,31 @@ public sealed class WinLiveElement : ILiveElement
 
     public (string How, string Value) TypeText(string text) => Actions.TypeText(_el, text);
     public string SetValue(string text) => Actions.SetValue(_el, text);
-    public string ClickDefault() => Actions.Click(_el);
+
+    /// <summary>Pattern click when the element offers one; element-center mouse click when it does not.</summary>
+    public string ClickDefault()
+    {
+        var strategy = ClickPlanner.Decide(Patterns);
+        return strategy switch
+        {
+            "invoke" => Actions.InvokeClick(_el),
+            "expandcollapse" => Actions.Expand(_el, collapse: false),
+            "selectionitem" => Actions.Select(_el),
+            "toggle" => Actions.Toggle(_el),
+            _ => ClickAtCenter(),
+        };
+    }
+
+    private string ClickAtCenter()
+    {
+        var (x, y, w, h) = Rect;
+        if (w <= 0 || h <= 0 || Offscreen)
+            throw new NoPatternException("element has no clickable pattern and no on-screen rect",
+                "scroll or resize the window so the element is visible, then click again");
+        Actions.MouseClick(x + w / 2, y + h / 2, right: false, doubleClick: false);
+        return "mouse-coords";
+    }
+
     public string Toggle() => Actions.Toggle(_el);
     public string ExpandCollapse(bool collapse) => Actions.Expand(_el, collapse);
     public string SelectItem() => Actions.Select(_el);

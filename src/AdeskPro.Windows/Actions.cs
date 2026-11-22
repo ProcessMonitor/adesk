@@ -9,6 +9,14 @@ namespace AdeskPro.Windows;
 /// <summary>Semantic actions on a live element, falling closed when no pattern exists.</summary>
 public static class Actions
 {
+    public static string InvokeClick(AutomationElement el)
+    {
+        if (!el.TryGetCurrentPattern(InvokePattern.Pattern, out var invoke))
+            throw new NoPatternException("element has no invoke pattern", "unreachable via planner");
+        ((InvokePattern)invoke).Invoke();
+        return "invoke";
+    }
+
     public static string Click(AutomationElement el)
     {
         if (el.TryGetCurrentPattern(InvokePattern.Pattern, out var invoke))
@@ -144,7 +152,7 @@ public static class Actions
     {
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SendInput was blocked");
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"SendInput was blocked (native error {Marshal.GetLastWin32Error()})");
     }
 
     // --- headed mouse: explicit physical input, opt-in per command ---
@@ -191,7 +199,7 @@ public static class Actions
 
     private static INPUT MouseInput(uint flags) => new()
     {
-        Type = 2, // MOUSE
+        Type = 0, // INPUT_MOUSE
         U = new InputUnion
         {
             Mi = new MOUSEINPUT { Dx = 0, Dy = 0, MouseData = 0, Flags = flags, Time = 0, ExtraInfo = IntPtr.Zero },

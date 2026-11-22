@@ -58,6 +58,7 @@ dotnet publish src/AdeskPro/AdeskPro.csproj -c Release -r win-x64 --self-contain
 
 几个亮点:
 
+- 元素没有可点击 pattern 时,`click` 自动回退到元素中心坐标的物理点击。
 - `snapshot --root @snap:eN` 对旧快照的一个子树重新深钻;子树内的 ref 会以拼接后的 scope path 重新发放,子树外全部保持有效。
 - `wait` 轮询到窗口出现或 ref 变为 `enabled` / `visible` / `gone`——agent 脚本里不再需要固定 sleep。
 - `batch` 在一个进程里顺序跑多条命令,支持 `stop-on-error`。
@@ -82,7 +83,7 @@ ref 形如 `@<snapshotId>:e<N>`,动作前按三步活体重定位:
 
 ## 路线图
 
-- [ ] 缺少 pattern 时对 ref 的坐标做 headed 点击
+
 - [ ] 两次快照之间的截图 diff
 - [ ] MCP 并行 dispatch
 - [ ] COM 层单调用超时
