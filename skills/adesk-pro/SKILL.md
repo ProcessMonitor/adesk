@@ -7,6 +7,8 @@ description: Drive Windows desktop apps for the user through the accessibility t
 
 adesk-pro reads Windows apps through UI Automation and returns JSON with refs. You act on refs, then verify by reading again — the observe-act-verify loop lives in you; the tool has no model inside.
 
+Install steps live in [INSTALL.md](INSTALL.md) shipped with this skill. Run the binary once before letting an agent use it.
+
 ## First run
 
 1. `adesk-pro status` — platform, session and store info.

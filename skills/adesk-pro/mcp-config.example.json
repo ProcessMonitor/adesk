@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "adesk-pro": {
+      "command": "C:\\path\\to\\publish\\adesk-pro.exe",
+      "args": ["mcp"]
+    }
+  }
+}
