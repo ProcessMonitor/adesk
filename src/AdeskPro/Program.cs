@@ -1,6 +1,6 @@
-using System.Text.Json.Nodes;
-using AdeskPro.Ui;
+using AdeskPro.Platform;
 
+using AdeskPro.Ui;
 namespace AdeskPro;
 
 public static class Program
@@ -21,7 +21,7 @@ public static class Program
         if (argv[0] == "mcp")
         {
             var session = TakeSession(ref argv);
-            Mcp.McpServer.Run(session);
+            Mcp.McpServer.Run(NewPlatform(), session);
             return 0;
         }
 
@@ -51,11 +51,15 @@ public static class Program
             Name = sessionName,
             InMemory = false,
             Refs = new RefStore(SessionStore.Dir(sessionName)),
+            Platform = NewPlatform(),
         };
         var envelope = spec.Run(args!, sessionState);
         Console.WriteLine(EnvelopeJson.Serialize(envelope));
         return envelope.Ok ? 0 : 1;
     }
+
+    /// <summary>One adapter per OS. Windows today; the macOS adapter plugs in here when it ships.</summary>
+    private static IPlatform NewPlatform() => new Windows.WindowsPlatform();
 
     private static string TakeSession(ref string[] argv)
     {

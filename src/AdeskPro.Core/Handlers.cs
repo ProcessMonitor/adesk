@@ -1,17 +1,17 @@
 using System.IO;
 using System.Text.Json.Nodes;
-using System.Windows.Automation;
+using AdeskPro.Platform;
 using AdeskPro.Ui;
 
 namespace AdeskPro;
 
-/// <summary>Command implementations. Every handler returns one Envelope; UIA exceptions map to error codes.</summary>
+/// <summary>Command implementations. Every handler returns one Envelope and touches the platform only through IPlatform.</summary>
 public static partial class Handlers
 {
     public static Envelope Status(Args a, Session s) => Envelope.Good(new JsonObject
     {
         ["command"] = "status",
-        ["platform"] = $"windows {Environment.OSVersion.Version}",
+        ["platform"] = s.Platform.PlatformName,
         ["version"] = Version.Value,
         ["session"] = s.Name,
         ["stateMode"] = s.InMemory ? "memory" : "disk",
@@ -23,8 +23,9 @@ public static partial class Handlers
     {
         try
         {
-            var apps = TopWindows()
-                .Where(w => string.IsNullOrEmpty(a.Str("process")) || w.ProcessName.Contains(a.Str("process"), StringComparison.OrdinalIgnoreCase))
+            var filter = a.Str("process");
+            var apps = s.Platform.ListTopWindows()
+                .Where(w => filter.Length == 0 || w.ProcessName.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .Select(w => new JsonObject
                 {
                     ["name"] = w.Name,
@@ -48,7 +49,7 @@ public static partial class Handlers
         {
             var pid = a.Int("pid", 0);
             var proc = a.Str("process");
-            var windows = TopWindows()
+            var windows = s.Platform.ListTopWindows()
                 .Where(w => pid == 0 || w.Pid == pid)
                 .Where(w => proc.Length == 0 || w.ProcessName.Contains(proc, StringComparison.OrdinalIgnoreCase))
                 .Select(w => new JsonObject
@@ -67,16 +68,14 @@ public static partial class Handlers
         {
             if (a.Str("root") is { Length: > 0 } rootToken) return Drill(a, s, rootToken);
 
-            var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
-            var source = UiASource.ForWindow(window);
-            var result = WalkWithOptions(a, source);
+            var info = s.Platform.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
+            var result = WalkWithOptions(a, s.Platform.SourceForWindow(info));
 
             var sid = Ids.NewSnapshotId();
             foreach (var e in result.Refs.Values) e.WindowName = info.Name;
             ReStamp(result.Root, sid);
             s.Refs.Save(sid, result.Refs);
 
-            var tree = ToJson(result.Root, a.Has("skeleton"));
             return Envelope.Good(new JsonObject
             {
                 ["command"] = "snapshot",
@@ -88,7 +87,7 @@ public static partial class Handlers
                 ["refCount"] = result.Refs.Count,
                 ["nodeCount"] = result.NodeCount,
                 ["complete"] = result.Complete,
-                ["tree"] = tree,
+                ["tree"] = ToJson(result.Root, a.Has("skeleton")),
             });
         }
         catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk-pro list-apps' to see candidates"); }
@@ -107,15 +106,14 @@ public static partial class Handlers
             return Envelope.Fail(ErrorCodes.StaleRef, $"snapshot '{sid}' is unknown or expired", "take a new snapshot");
         try
         {
-            var resolved = UiASource.Resolve(rootEntry);
+            var resolved = s.Platform.Resolve(rootEntry);
             if (resolved.Element is null)
                 return Envelope.Fail(ErrorCodes.StaleRef, "the element or its window is gone",
-                    "take a fresh full snapshot", details: new JsonObject { ["kind"] = "element_absent" });
+                    "take a fresh full snapshot", details: new JsonObject { ["kind"] = "element_absent", ["diagnostic"] = resolved.Diagnostic });
 
-            var source = UiASource.ForElement(resolved.Element);
-            var result = WalkWithOptions(a, source);
-            var (merged, localToGlobal) = MergeDrill(entries, rootIndex, rootEntry, result.Refs);
-            StampDrilled(result.Root, sid, localToGlobal);
+            var result = WalkWithOptions(a, s.Platform.SourceForResolved(resolved));
+            var (merged, localToGlobal) = DrillMath.Merge(entries, rootIndex, rootEntry, result.Refs);
+            DrillMath.StampDrilled(result.Root, sid, localToGlobal);
             s.Refs.Save(sid, merged);
             return Envelope.Good(new JsonObject
             {
@@ -147,32 +145,15 @@ public static partial class Handlers
             Budget = new WalkBudget { DeadlineMs = a.Int("timeout-ms", 5000) },
         });
 
-    /// <summary>Delegates the scope-path math to the pure, unit-tested DrillMath.</summary>
-    private static (Dictionary<int, RefEntry> Merged, Dictionary<int, int> LocalToGlobal) MergeDrill(
-        Dictionary<int, RefEntry> existing, int rootIndex, RefEntry root, Dictionary<int, RefEntry> fresh)
-        => DrillMath.Merge(existing, rootIndex, root, fresh);
-
-    private static void StampDrilled(UiNodeData n, string sid, Dictionary<int, int> localToGlobal)
-    {
-        if (n.Ref is not null)
-        {
-            n.Ref = Ids.ParseRef(n.Ref) is { } p && localToGlobal.TryGetValue(p.Index, out var global)
-                ? Ids.FormatRef(sid, global)
-                : null;
-        }
-        foreach (var child in n.Children) StampDrilled(child, sid, localToGlobal);
-    }
-
     public static Envelope Find(Args a, Session s)
     {
         try
         {
-            var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), null);
+            var info = s.Platform.FindWindow(a.Str("app"), OptInt(a, "pid"), null);
             var needle = a.Str("name");
             var role = a.Str("role");
             var limit = Math.Max(1, a.Int("limit", 10));
-            var source = UiASource.ForWindow(window);
-            var result = Walker.Walk(source, new Walker.Options { Budget = new WalkBudget { DeadlineMs = 5000 } });
+            var result = WalkWithOptions(a, s.Platform.SourceForWindow(info));
 
             var sid = Ids.NewSnapshotId();
             var matches = new JsonArray();
@@ -194,6 +175,7 @@ public static partial class Handlers
                             Role = n.Role, Name = n.Name, AutomationId = n.AutomationId,
                             ClassName = n.ClassName, ScopePath = n.ScopePath, Patterns = n.Patterns,
                             CapturedUnique = false, Rect = [n.Rect.X, n.Rect.Y, n.Rect.W, n.Rect.H],
+                            WindowName = info.Name,
                         };
                         n.Ref = Ids.FormatRef("__sid__", index);
                     }
@@ -229,51 +211,44 @@ public static partial class Handlers
 
     public static Envelope Get(Args a, Session s)
     {
-        return WithElement(a, s, (el, entry, how) =>
+        return WithElement(a, s, (el, entry, how) => Envelope.Good(new JsonObject
         {
-            string? value = null;
-            try { if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var v)) value = ((ValuePattern)v).Current.Value; }
-            catch (ElementNotAvailableException) { }
-            var rect = el.Current.BoundingRectangle;
-            return Envelope.Good(new JsonObject
-            {
-                ["command"] = "get",
-                ["ref"] = a.Str("ref"),
-                ["resolvedBy"] = how,
-                ["role"] = entry.Role,
-                ["name"] = el.Current.Name,
-                ["value"] = value,
-                ["enabled"] = el.Current.IsEnabled,
-                ["offscreen"] = el.Current.IsOffscreen,
-                ["rect"] = new JsonObject { ["x"] = (int)rect.X, ["y"] = (int)rect.Y, ["w"] = (int)rect.Width, ["h"] = (int)rect.Height },
-                ["patterns"] = new JsonArray([.. entry.Patterns.Select(p => JsonValue.Create(p))]),
-            });
-        });
+            ["command"] = "get",
+            ["ref"] = a.Str("ref"),
+            ["resolvedBy"] = how,
+            ["role"] = entry.Role,
+            ["name"] = el.Name,
+            ["value"] = el.CurrentValue(),
+            ["enabled"] = el.Enabled,
+            ["offscreen"] = el.Offscreen,
+            ["rect"] = new JsonObject { ["x"] = el.Rect.X, ["y"] = el.Rect.Y, ["w"] = el.Rect.W, ["h"] = el.Rect.H },
+            ["patterns"] = new JsonArray([.. el.Patterns.Select(p => JsonValue.Create(p))]),
+        }));
     }
 
     public static Envelope Click(Args a, Session s) =>
-        Act(a, s, (el) => Actions.Click(el), "click");
+        Act(a, s, el => el.ClickDefault(), "click");
 
     public static Envelope Toggle(Args a, Session s) =>
-        Act(a, s, (el) => Actions.Toggle(el), "toggle");
+        Act(a, s, el => el.Toggle(), "toggle");
 
     public static Envelope Expand(Args a, Session s)
     {
         var collapse = a.Has("collapse");
-        return Act(a, s, (el) => Actions.Expand(el, collapse), collapse ? "collapse" : "expand");
+        return Act(a, s, el => el.ExpandCollapse(collapse), collapse ? "collapse" : "expand");
     }
 
     public static Envelope Select(Args a, Session s) =>
-        Act(a, s, (el) => Actions.Select(el), "select");
+        Act(a, s, el => el.SelectItem(), "select");
 
     public static Envelope Focus(Args a, Session s)
     {
-        if (a.Str("ref") is { Length: > 0 } rf)
-            return Act(a, s, (el) => Actions.FocusEl(el), "focus");
+        if (a.Str("ref") is { Length: > 0 })
+            return Act(a, s, el => { el.FocusNow(); return "focus"; }, "focus");
         try
         {
-            var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), null);
-            window.SetFocus();
+            var info = s.Platform.FindWindow(a.Str("app"), OptInt(a, "pid"), null);
+            s.Platform.FocusWindow(info);
             return Envelope.Good(new JsonObject { ["command"] = "focus", ["app"] = info.Name, ["how"] = "window" });
         }
         catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message); }
@@ -288,12 +263,7 @@ public static partial class Handlers
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(a.Str("app")))
-            {
-                var (window, _) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), null);
-                window.SetFocus();
-            }
-            Actions.PressKeys(a.Str("keys"));
+            s.Platform.PressKeys(a.Str("keys"), a.Str("app"), OptInt(a, "pid"));
             return Envelope.Good(new JsonObject
             {
                 ["command"] = "press",
@@ -302,19 +272,19 @@ public static partial class Handlers
                 ["disposition"] = new JsonObject { ["delivery"] = "delivered", ["retry"] = "unsafe" },
             });
         }
-        catch (Ui.NoPatternException ex) { return NoPattern(ex); }
+        catch (NoPatternException ex) { return NoPattern(ex); }
         catch (Exception ex) { return Internal(ex); }
     }
 
     public static Envelope Scroll(Args a, Session s)
     {
         var dy = a.Int("dy", 30);
-        return Act(a, s, (el) => Actions.ScrollDy(el, dy), "scroll");
+        return Act(a, s, el => el.ScrollDy(dy), "scroll");
     }
 
     public static Envelope ClipboardGet(Args a, Session s)
     {
-        try { return Envelope.Good(new JsonObject { ["command"] = "clipboard-get", ["text"] = Actions.ClipboardGet() }); }
+        try { return Envelope.Good(new JsonObject { ["command"] = "clipboard-get", ["text"] = s.Platform.ClipboardGet() }); }
         catch (Exception ex) { return Internal(ex); }
     }
 
@@ -322,7 +292,7 @@ public static partial class Handlers
     {
         var text = ReadText(a);
         if (text is null) return Envelope.Fail(ErrorCodes.InvalidArgs, "--text or --stdin is required");
-        try { Actions.ClipboardSet(text); return Envelope.Good(new JsonObject { ["command"] = "clipboard-set" }); }
+        try { s.Platform.ClipboardSet(text); return Envelope.Good(new JsonObject { ["command"] = "clipboard-set" }); }
         catch (Exception ex) { return Internal(ex); }
     }
 
@@ -336,19 +306,19 @@ public static partial class Handlers
         {
             if (command == "type")
             {
-                var typed = Actions.TypeText(el, text);
+                var typed = el.TypeText(text);
                 return (typed.How, (string?)typed.Value);
             }
-            var value = Actions.SetValue(el, text);
+            var value = el.SetValue(text);
             return ("value", (string?)value);
         }, command, extra: new JsonObject { ["chars"] = text.Length });
     }
 
-    private static Envelope Act(Args a, Session s, Func<AutomationElement, string> action,
+    private static Envelope Act(Args a, Session s, Func<ILiveElement, string> action,
         string command, JsonObject? extra = null)
         => Act(a, s, el => (action(el), (string?)null), command, extra);
 
-    private static Envelope Act(Args a, Session s, Func<AutomationElement, (string How, string? Value)> action,
+    private static Envelope Act(Args a, Session s, Func<ILiveElement, (string How, string? Value)> action,
         string command, JsonObject? extra = null)
     {
         return WithElement(a, s, (el, entry, how) =>
@@ -369,15 +339,14 @@ public static partial class Handlers
                 if (extra is not null) foreach (var kv in extra) data[kv.Key] = kv.Value?.DeepClone();
                 return Envelope.Good(data);
             }
-            catch (Ui.NoPatternException ex) { return NoPattern(ex); }
-            catch (ElementNotAvailableException) { return Stale(a.Str("ref")); }
+            catch (NoPatternException ex) { return NoPattern(ex); }
             catch (Exception ex) { return Internal(ex); }
         });
     }
 
     /// <summary>Resolves a ref (from --ref) to a live element and hands it to the continuation.</summary>
     private static Envelope WithElement(Args a, Session s,
-        Func<AutomationElement, RefEntry, string, Envelope> continuation)
+        Func<ILiveElement, RefEntry, string, Envelope> continuation)
     {
         var token = a.Str("ref");
         var parsed = Ids.ParseRef(token);
@@ -389,7 +358,7 @@ public static partial class Handlers
                 "take a new snapshot");
         try
         {
-            var resolved = UiASource.Resolve(entry);
+            var resolved = s.Platform.Resolve(entry);
             if (resolved.Element is null)
                 return Envelope.Fail(ErrorCodes.StaleRef,
                     "the element or its window is gone",
@@ -409,7 +378,7 @@ public static partial class Handlers
     private static Envelope Stale(string token) =>
         Envelope.Fail(ErrorCodes.StaleRef, $"the element behind {token} is gone", "take a new snapshot");
 
-    private static Envelope NoPattern(Ui.NoPatternException ex) =>
+    private static Envelope NoPattern(NoPatternException ex) =>
         Envelope.Fail(ErrorCodes.NoPattern, ex.Message, ex.Suggestion);
 
     private static Envelope AmbiguousWindows(AmbiguousWindowException ex) =>
@@ -439,8 +408,6 @@ public static partial class Handlers
 
     private static int? OptInt(Args a, string name) => a.Int(name, 0) > 0 ? a.Int(name) : null;
     private static long? OptLong(Args a, string name) => a.Int(name, 0) > 0 ? a.Int(name) : null;
-
-    private static IReadOnlyList<WindowInfo> TopWindows() => UiASource.TopWindows();
 
     private static JsonObject? ToJson(UiNodeData n, bool skeleton)
     {

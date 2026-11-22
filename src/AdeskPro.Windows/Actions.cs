@@ -2,13 +2,9 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
+using AdeskPro.Platform;
 
-namespace AdeskPro.Ui;
-
-public sealed class NoPatternException(string what, string suggestion) : Exception(what)
-{
-    public string Suggestion { get; } = suggestion;
-}
+namespace AdeskPro.Windows;
 
 /// <summary>Semantic actions on a live element, falling closed when no pattern exists.</summary>
 public static class Actions
@@ -106,11 +102,7 @@ public static class Actions
             "the ref may sit in a virtualized list; try scrolling with 'adesk-pro press pgdn' after focusing");
     }
 
-    public static string FocusEl(AutomationElement el)
-    {
-        el.SetFocus();
-        return "focus";
-    }
+    public static void FocusEl(AutomationElement el) => el.SetFocus();
 
     public static string ClipboardGet() => Clipboard.GetText();
 
@@ -215,8 +207,6 @@ public static class Actions
         },
     };
 
-    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
-
     private static ushort MapKey(string name)
     {
         var k = name.ToLowerInvariant();
@@ -304,4 +294,7 @@ public static class Actions
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
 }

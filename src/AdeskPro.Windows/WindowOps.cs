@@ -1,9 +1,10 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using AdeskPro.Platform;
 using System.Windows.Automation;
 
-namespace AdeskPro.Ui;
+namespace AdeskPro.Windows;
 
 /// <summary>Window lifecycle and geometry: launch, close, minimize/maximize/restore, move, resize.</summary>
 public static class WindowOps

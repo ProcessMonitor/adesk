@@ -20,13 +20,14 @@ public static class McpServer
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    public static void Run(string sessionName)
+    public static void Run(Platform.IPlatform platform, string sessionName)
     {
         var session = new Session
         {
             Name = sessionName,
             InMemory = true,
             Refs = new RefStore(null),
+            Platform = platform,
         };
         var stdout = Console.Out;
         while (Console.In.ReadLine() is { } line)
@@ -77,9 +78,10 @@ public static class McpServer
                 ["title"] = "adesk-pro — desktop use via accessibility trees",
             },
             ["instructions"] =
-                "adesk-pro reads Windows accessibility trees and operates desktop apps. Read the 'snapshot' " +
-                "tool first: take a snapshot of the app, act on refs from it (@sid:eN), then re-snapshot to verify. " +
-                "Retry an action only when its disposition.retry is safe.",
+                "adesk-pro reads Windows accessibility trees and operates desktop apps. Call the 'skills' tool " +
+                "first for the full usage guide. In short: take a 'snapshot' of the app, act on refs from it " +
+                "(@sid:eN) with click/type/set-value/press, then re-snapshot to verify. Retry an action only " +
+                "when its disposition.retry is safe.",
         };
     }
 

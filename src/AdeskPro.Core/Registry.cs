@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AdeskPro.Platform;
 using AdeskPro.Ui;
 
 namespace AdeskPro;
@@ -28,11 +29,12 @@ public sealed class Args
         _values.TryGetValue(name, out var v) && v is int i ? i : def;
 }
 
-/// <summary>Session-scoped state: which snapshot store the command reads and writes.</summary>
+/// <summary>Session-scoped state: the platform adapter and the snapshot store for this session.</summary>
 public sealed class Session
 {
     public required string Name { get; init; }
     public required bool InMemory { get; init; }   // MCP mode keeps state in the server process
+    public required IPlatform Platform { get; init; }
     public RefStore Refs { get; set; } = null!;
 }
 
@@ -168,6 +170,9 @@ public static class Registry
              new FlagSpec("to-x", FlagKind.Integer, true, "End X"),
              new FlagSpec("to-y", FlagKind.Integer, true, "End Y")],
             (a, s) => Handlers.Drag(a, s)),
+        new("skills", "Print the built-in agent guide: the loop, refs, delivery and retry rules.",
+            [new FlagSpec("name", FlagKind.String, false, "Guide name: desktop (default)")],
+            (a, s) => Handlers.Skills(a, s)),
     ];
 
     public static CommandSpec? Find(string name) =>

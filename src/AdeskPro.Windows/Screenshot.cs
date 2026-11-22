@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace AdeskPro.Ui;
+namespace AdeskPro.Windows;
 
 /// <summary>Window capture via GDI BitBlt/PrintWindow, encoded as PNG through WPF imaging.</summary>
 public static class Screenshot

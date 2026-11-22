@@ -17,7 +17,7 @@ public class McpTests
         Console.SetOut(output);
         try
         {
-            AdeskPro.Mcp.McpServer.Run("test");
+            AdeskPro.Mcp.McpServer.Run(new FakePlatform(), "test");
         }
         finally
         {

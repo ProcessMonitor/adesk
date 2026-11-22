@@ -3,15 +3,22 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <UseWPF>true</UseWPF>
     <RootNamespace>AdeskPro</RootNamespace>
     <AssemblyName>adesk-pro</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <AssemblyVersion>0.1.0</AssemblyVersion>
-    <Version>0.1.0</Version>
+    <AssemblyVersion>0.2.0</AssemblyVersion>
+    <Version>0.2.0</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AdeskPro.Core\AdeskPro.Core.csproj" />
+    <ProjectReference Include="..\AdeskPro.Windows\AdeskPro.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\skills\adesk-pro\SKILL.md" Link="skills\desktop.md" />
+  </ItemGroup>
 
 </Project>

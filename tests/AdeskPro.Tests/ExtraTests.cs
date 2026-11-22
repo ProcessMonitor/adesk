@@ -73,6 +73,7 @@ public class DispatchTests
         Name = "test",
         InMemory = true,
         Refs = new RefStore(null),
+        Platform = new FakePlatform(),
     };
 
     [Fact]

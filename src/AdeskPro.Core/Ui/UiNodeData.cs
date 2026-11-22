@@ -1,6 +1,3 @@
-using System.Windows.Automation;
-
-namespace AdeskPro.Ui;
 
 /// <summary>Everything the walker needs to know about one element, source-agnostic.</summary>
 public sealed class UiNodeData
@@ -24,7 +21,7 @@ public sealed class UiNodeData
     public bool SkeletonCut { get; set; }
     public string? Ref { get; set; }
     /// <summary>Live UIA element behind this node; null in test fakes.</summary>
-    public AutomationElement? Raw { get; set; }
+    public object? Raw { get; set; }
 
     public bool IsInteractive => Patterns.Count > 0 || IsKeyboardFocusable;
 

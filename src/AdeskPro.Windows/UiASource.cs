@@ -1,20 +1,12 @@
+using AdeskPro.Platform;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Windows.Automation;
+using AdeskPro.Ui;
 
-namespace AdeskPro.Ui;
+namespace AdeskPro.Windows;
 
-public sealed class AppNotFoundException(string message) : Exception(message);
-
-public sealed record WindowInfo(string Name, int Pid, string ProcessName, long Hwnd);
-
-public sealed class AmbiguousWindowException(IReadOnlyList<WindowInfo> windows)
-    : Exception("multiple windows match the filter")
-{
-    public IReadOnlyList<WindowInfo> Windows { get; } = windows;
-}
-
-/// <summary>The real UI Automation source: window lookup, cached-property walks, live resolution.</summary>
+/// <summary>The Windows Walker.ISource: window lookup, cached-property walks, live resolution.</summary>
 public sealed class UiASource : Walker.ISource
 {
     private static readonly TreeWalker View = TreeWalker.ControlViewWalker;
@@ -42,7 +34,7 @@ public sealed class UiASource : Walker.ISource
 
     // --- window lookup ---
 
-    public static (AutomationElement Window, WindowInfo Info) FindWindow(string? app, int? pid, long? hwnd)
+    public static (AutomationElement El, WindowInfo Info) FindWindow(string? app, int? pid, long? hwnd)
     {
         if (hwnd is { } h && h > 0)
         {
@@ -93,6 +85,19 @@ public sealed class UiASource : Walker.ISource
         return new WindowInfo(name, pid, ProcessNameOf(pid), hwnd);
     }
 
+    public static string ProcessNameOf(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            return p.ProcessName;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return "";
+        }
+    }
+
     /// <summary>Top-level Window elements of the desktop, in z-order.</summary>
     public static IReadOnlyList<WindowInfo> TopWindows()
     {
@@ -110,19 +115,6 @@ public sealed class UiASource : Walker.ISource
         return list;
     }
 
-    public static string ProcessNameOf(int pid)
-    {
-        try
-        {
-            using var p = Process.GetProcessById(pid);
-            return p.ProcessName;
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            return "";
-        }
-    }
-
     public static UiASource ForWindow(AutomationElement window) => new(window);
 
     /// <summary>Walk root at an arbitrary element (used by snapshot --root drills).</summary>
@@ -134,11 +126,11 @@ public sealed class UiASource : Walker.ISource
 
     public IReadOnlyList<UiNodeData> Children(UiNodeData node, WalkBudget budget)
     {
-        if (node.Raw is null) return [];
+        if (node.Raw is not AutomationElement raw) return [];
         var list = new List<UiNodeData>();
         try
         {
-            var child = View.GetFirstChild(node.Raw, _cache);
+            var child = View.GetFirstChild(raw, _cache);
             var guard = 0;
             while (child is not null && guard++ < budget.MaxSiblings)
             {
@@ -214,6 +206,29 @@ public sealed class UiASource : Walker.ISource
 
     private static UiNodeData Dead() => new() { Role = "unavailable", IsOffscreen = true };
 
+    /// <summary>Pattern names an element supports, for envelope display and capability checks.</summary>
+    public static IReadOnlyList<string> PatternsOf(AutomationElement el)
+    {
+        bool focusable;
+        ControlType? ct;
+        try
+        {
+            focusable = el.Current.IsKeyboardFocusable;
+            ct = el.Current.ControlType;
+        }
+        catch (ElementNotAvailableException) { return []; }
+        if (!focusable && !KnownInteractive(ct)) return [];
+
+        var patterns = new List<string>();
+        TryAdd(el, patterns, InvokePattern.Pattern, "invoke");
+        TryAdd(el, patterns, TogglePattern.Pattern, "toggle");
+        TryAdd(el, patterns, ValuePattern.Pattern, "value");
+        TryAdd(el, patterns, ExpandCollapsePattern.Pattern, "expandcollapse");
+        TryAdd(el, patterns, SelectionItemPattern.Pattern, "selectionitem");
+        TryAdd(el, patterns, ScrollPattern.Pattern, "scroll");
+        return patterns;
+    }
+
     private static List<string> ReadPatterns(AutomationElement el, UiNodeData data)
     {
         var patterns = new List<string>();
@@ -258,7 +273,7 @@ public sealed class UiASource : Walker.ISource
     }
 
     /// <summary>Re-resolves a saved ref: candidate windows by pid (+hwnd), runtime-id pinning, identity match.</summary>
-    public static ResolveOutcome Resolve(RefEntry entry)
+    public static ResolveOutcome ResolveRaw(RefEntry entry)
     {
         var diag = new JsonObject
         {
@@ -268,8 +283,6 @@ public sealed class UiASource : Walker.ISource
             ["runtimeIdLength"] = entry.RuntimeId.Length,
         };
 
-        // candidate windows: every top-level window of the pid (WinUI/Chrome host content islands
-        // where FromHandle(hwnd) is NOT the element the snapshot walked), plus the hwnd itself
         var candidates = new List<AutomationElement>();
         if (entry.Hwnd > 0)
         {
@@ -288,8 +301,7 @@ public sealed class UiASource : Walker.ISource
         foreach (var window in candidates.DistinctBy(WindowKeyOf))
         {
             scannedWindows++;
-            var info = InfoOf(window);
-            diag["lastWindow"] = new JsonObject { ["name"] = info.Name, ["hwnd"] = info.Hwnd };
+            diag["lastWindow"] = new JsonObject { ["name"] = InfoOf(window).Name };
 
             var outcome = SearchWindow(window, entry, diag);
             if (outcome is not null) { diag["scannedWindows"] = scannedWindows; return outcome; }
@@ -306,12 +318,10 @@ public sealed class UiASource : Walker.ISource
 
     private static ResolveOutcome? SearchWindow(AutomationElement window, RefEntry entry, JsonObject diag)
     {
-        // fast path: scope-path descent
         var byPath = Descend(window, entry.ScopePath);
         if (byPath is not null && MatchesIdentity(byPath, entry))
             return new ResolveOutcome { Element = byPath, How = "scope-path", Diagnostic = diag };
 
-        // identity scan: runtime id first, then identity key
         AutomationElement? runtimeMatch = null;
         var identityMatches = new List<AutomationElement>();
         try
@@ -344,6 +354,19 @@ public sealed class UiASource : Walker.ISource
             throw new AmbiguousTargetException(
                 $"{identityMatches.Count} live elements match the saved identity");
         return null;
+    }
+
+    /// <summary>IPlatform.Resolve: re-resolves a saved ref to a semantic live element.</summary>
+    public static LiveResolve ResolveRef(RefEntry entry)
+    {
+        var outcome = ResolveRaw(entry);
+        return new LiveResolve
+        {
+            Element = outcome.Element is null ? null : new WinLiveElement(outcome.Element),
+            RootHandle = outcome.Element,
+            How = outcome.How,
+            Diagnostic = outcome.Diagnostic,
+        };
     }
 
     private static bool RuntimeIdEquals(AutomationElement el, int[] saved)
@@ -392,5 +415,3 @@ public sealed class UiASource : Walker.ISource
         catch (ElementNotAvailableException) { return null; }
     }
 }
-
-public sealed class AmbiguousTargetException(string message) : Exception(message);

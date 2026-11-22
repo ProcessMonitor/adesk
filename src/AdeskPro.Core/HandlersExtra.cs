@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Windows.Automation;
+using AdeskPro.Platform;
 using AdeskPro.Ui;
 
 namespace AdeskPro;
@@ -61,13 +61,8 @@ public static partial class Handlers
     {
         try
         {
-            var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
-            var hwnd = info.Hwnd;
-            try { if (hwnd <= 0) hwnd = window.Current.NativeWindowHandle; }
-            catch (ElementNotAvailableException) { }
-            if (hwnd <= 0)
-                return Envelope.Fail(ErrorCodes.NotSupported, "this window has no native handle to capture");
-            var png = Screenshot.CapturePng(hwnd);
+            var info = s.Platform.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
+            var png = s.Platform.CapturePng(info.Hwnd);
             var data = new JsonObject
             {
                 ["command"] = "screenshot",
@@ -114,12 +109,12 @@ public static partial class Handlers
                 if (entry is null) return Envelope.Fail(ErrorCodes.StaleRef, $"snapshot '{sid}' is unknown or expired");
                 while (DateTime.UtcNow < deadline)
                 {
-                    var resolved = UiASource.Resolve(entry);
+                    var resolved = s.Platform.Resolve(entry);
                     var met = until switch
                     {
                         "gone" => resolved.Element is null,
-                        "enabled" => resolved.Element?.Current.IsEnabled == true,
-                        "visible" => resolved.Element is not null && !resolved.Element.Current.IsOffscreen,
+                        "enabled" => resolved.Element?.Enabled == true,
+                        "visible" => resolved.Element is not null && !resolved.Element.Offscreen,
                         _ => false,
                     };
                     if (met)
@@ -141,7 +136,9 @@ public static partial class Handlers
                 var app = a.Str("app");
                 while (DateTime.UtcNow < deadline)
                 {
-                    if (WindowOps.MatchWindows(app, OptInt(a, "pid"), null).Count > 0)
+                    if (s.Platform.ListTopWindows().Any(w =>
+                        (w.Name?.Contains(app, StringComparison.OrdinalIgnoreCase) ?? false)
+                        || w.ProcessName.Contains(app, StringComparison.OrdinalIgnoreCase)))
                         return Envelope.Good(new JsonObject
                         {
                             ["command"] = "wait", ["kind"] = "window", ["app"] = app,
@@ -218,7 +215,7 @@ public static partial class Handlers
     {
         try
         {
-            var (pid, hwnd, name) = WindowOps.Launch(a.Str("exe"), a.Str("args"));
+            var (pid, hwnd, name) = s.Platform.Launch(a.Str("exe"), a.Str("args"));
             return Envelope.Good(new JsonObject
             {
                 ["command"] = "launch",
@@ -235,38 +232,46 @@ public static partial class Handlers
     {
         try
         {
-            var closed = WindowOps.CloseApp(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), a.Has("force"));
+            var closed = s.Platform.CloseApp(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), a.Has("force"));
             return Envelope.Good(new JsonObject { ["command"] = "close-app", ["closed"] = closed });
         }
         catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message); }
         catch (Exception ex) { return Internal(ex); }
     }
 
-    public static Envelope Minimize(Args a, Session s) => WindowState(a, WindowVisualState.Minimized, "minimize");
-    public static Envelope Maximize(Args a, Session s) => WindowState(a, WindowVisualState.Maximized, "maximize");
+    public static Envelope Minimize(Args a, Session s) => WindowStateCmd(a, s, "minimize");
+    public static Envelope Maximize(Args a, Session s) => WindowStateCmd(a, s, "maximize");
+    public static Envelope Restore(Args a, Session s) => WindowStateCmd(a, s, "restore");
 
-    public static Envelope Restore(Args a, Session s) => WindowState(a, WindowVisualState.Normal, "restore");
-
-    private static Envelope WindowState(Args a, WindowVisualState state, string command)
+    private static Envelope WindowStateCmd(Args a, Session s, string state)
     {
         try
         {
-            var changed = WindowOps.SetWindowState(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), state);
+            var changed = s.Platform.WindowState(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), state);
             if (changed == 0) return Envelope.Fail(ErrorCodes.NoPattern, "no matched window exposes the Window pattern");
-            return Envelope.Good(new JsonObject { ["command"] = command, ["changed"] = changed });
+            return Envelope.Good(new JsonObject { ["command"] = state, ["changed"] = changed });
         }
         catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message); }
         catch (Exception ex) { return Internal(ex); }
     }
 
-    public static Envelope MoveWindow(Args a, Session s) => Geometry(a, "move-window", resize: false);
-    public static Envelope ResizeWindow(Args a, Session s) => Geometry(a, "resize-window", resize: true);
+    public static Envelope MoveWindow(Args a, Session s) => Geometry(a, s, "move-window", resize: false);
+    public static Envelope ResizeWindow(Args a, Session s) => Geometry(a, s, "resize-window", resize: true);
 
-    private static Envelope Geometry(Args a, string command, bool resize)
+    private static Envelope Geometry(Args a, Session s, string command, bool resize)
     {
         try
         {
-            var windows = WindowOps.MatchWindows(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
+            var pid = OptInt(a, "pid");
+            var hwnd = OptLong(a, "hwnd");
+            var app = a.Str("app");
+            var windows = s.Platform.ListTopWindows()
+                .Where(w => pid is null || w.Pid == pid)
+                .Where(w => hwnd is null || w.Hwnd == hwnd)
+                .Where(w => app.Length == 0
+                    || (w.Name?.Contains(app, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || w.ProcessName.Contains(app, StringComparison.OrdinalIgnoreCase))
+                .ToList();
             if (windows.Count == 0) return Envelope.Fail(ErrorCodes.AppNotFound, "no window matches the filter");
             if (windows.Count > 1) return AmbiguousWindows(new AmbiguousWindowException(windows));
             var info = windows[0];
@@ -275,7 +280,7 @@ public static partial class Handlers
                 return Envelope.Fail(ErrorCodes.InvalidArgs, "--w and --h are required for resize-window");
             if (!resize && x < 0 && y < 0)
                 return Envelope.Fail(ErrorCodes.InvalidArgs, "give --x and/or --y for move-window");
-            WindowOps.MoveResize(info.Hwnd,
+            s.Platform.MoveResize(info.Hwnd,
                 x >= 0 ? x : null, y >= 0 ? y : null,
                 resize ? w : null, resize ? h : null);
             return Envelope.Good(new JsonObject
@@ -293,7 +298,7 @@ public static partial class Handlers
     {
         try
         {
-            Actions.MouseClick(a.Int("x"), a.Int("y"), a.Has("right"), a.Has("double"));
+            s.Platform.MouseClick(a.Int("x"), a.Int("y"), a.Has("right"), a.Has("double"));
             return Envelope.Good(new JsonObject
             {
                 ["command"] = "mouse-click", ["x"] = a.Int("x"), ["y"] = a.Int("y"),
@@ -309,7 +314,7 @@ public static partial class Handlers
     {
         try
         {
-            Actions.Hover(a.Int("x"), a.Int("y"));
+            s.Platform.Hover(a.Int("x"), a.Int("y"));
             return Envelope.Good(new JsonObject { ["command"] = "hover", ["x"] = a.Int("x"), ["y"] = a.Int("y") });
         }
         catch (Exception ex) { return Internal(ex); }
@@ -319,7 +324,7 @@ public static partial class Handlers
     {
         try
         {
-            Actions.Drag(a.Int("from-x"), a.Int("from-y"), a.Int("to-x"), a.Int("to-y"));
+            s.Platform.Drag(a.Int("from-x"), a.Int("from-y"), a.Int("to-x"), a.Int("to-y"));
             return Envelope.Good(new JsonObject
             {
                 ["command"] = "drag",
@@ -331,24 +336,67 @@ public static partial class Handlers
         }
         catch (Exception ex) { return Internal(ex); }
     }
+
+    // --- embedded agent guides ---
+
+    /// <summary>Prints an agent guide embedded in the running binary, so guidance always matches the version.</summary>
+    public static Envelope Skills(Args a, Session s)
+    {
+        var name = string.IsNullOrWhiteSpace(a.Str("name")) ? "desktop" : a.Str("name");
+        if (name is not ("desktop" or "platform"))
+            return Envelope.Fail(ErrorCodes.InvalidArgs, $"unknown guide '{name}'",
+                "available guides: desktop, platform");
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var resourceName = asm.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith($"skills.{name}.md", StringComparison.OrdinalIgnoreCase));
+            if (resourceName is null) continue;
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream is null) continue;
+            using var reader = new StreamReader(stream);
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = "skills",
+                ["name"] = name,
+                ["content"] = reader.ReadToEnd(),
+            });
+        }
+        return Envelope.Fail(ErrorCodes.NotSupported, $"no guide named '{name}' is embedded in this build",
+            "guides ship in the adesk-pro binary");
+    }
 }
 
 /// <summary>Scope-path math for drill-downs, kept pure so it can be tested without UIA.</summary>
 public static class DrillMath
 {
+    /// <summary>Re-stamps a drilled tree's refs from the local→global index map; refs that were
+    /// dropped by the merge become null.</summary>
+    public static void StampDrilled(UiNodeData n, string sid, Dictionary<int, int> localToGlobal)
+    {
+        if (n.Ref is not null)
+        {
+            n.Ref = Ids.ParseRef(n.Ref) is { } p && localToGlobal.TryGetValue(p.Index, out var global)
+                ? Ids.FormatRef(sid, global)
+                : null;
+        }
+        foreach (var child in n.Children) StampDrilled(child, sid, localToGlobal);
+    }
+
     /// <summary>Merges a fresh subtree walk into an existing snapshot: keeps entries outside the subtree,
-    /// composes fresh scope paths onto the drilled root's path, re-indexes from the highest existing id.</summary>
+    /// composes fresh scope paths onto the drilled root's path. Fresh ids start above the highest
+    /// pre-existing id — a just-freed id is never reused, or an old ref would silently resolve
+    /// to a different element.</summary>
     public static (Dictionary<int, RefEntry> Merged, Dictionary<int, int> LocalToGlobal) Merge(
         Dictionary<int, RefEntry> existing, int rootIndex, RefEntry root, Dictionary<int, RefEntry> fresh)
     {
         static bool StrictlyInside(List<int> scope, List<int> rootPath) =>
             scope.Count > rootPath.Count && !scope.Take(rootPath.Count).Where((v, i) => v != rootPath[i]).Any();
 
+        var next = existing.Count > 0 ? existing.Keys.Max() + 1 : 1;
         var merged = existing
             .Where(kv => kv.Key == rootIndex || !StrictlyInside(kv.Value.ScopePath, root.ScopePath))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
         var localToGlobal = new Dictionary<int, int>();
-        var next = existing.Count > 0 ? existing.Keys.Max() + 1 : 1;
         foreach (var (local, entry) in fresh)
         {
             entry.ScopePath = root.ScopePath.Concat(entry.ScopePath).ToList();
