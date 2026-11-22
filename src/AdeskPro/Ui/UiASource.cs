@@ -93,6 +93,23 @@ public sealed class UiASource : Walker.ISource
         return new WindowInfo(name, pid, ProcessNameOf(pid), hwnd);
     }
 
+    /// <summary>Top-level Window elements of the desktop, in z-order.</summary>
+    public static IReadOnlyList<WindowInfo> TopWindows()
+    {
+        var list = new List<WindowInfo>();
+        foreach (AutomationElement w in AutomationElement.RootElement.FindAll(
+            TreeScope.Children, Condition.TrueCondition))
+        {
+            try
+            {
+                if (w.Current.ControlType != ControlType.Window) continue;
+                list.Add(InfoOf(w));
+            }
+            catch (ElementNotAvailableException) { }
+        }
+        return list;
+    }
+
     public static string ProcessNameOf(int pid)
     {
         try
@@ -107,6 +124,9 @@ public sealed class UiASource : Walker.ISource
     }
 
     public static UiASource ForWindow(AutomationElement window) => new(window);
+
+    /// <summary>Walk root at an arbitrary element (used by snapshot --root drills).</summary>
+    public static UiASource ForElement(AutomationElement root) => new(root);
 
     // --- Walker.ISource ---
 

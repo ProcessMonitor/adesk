@@ -86,44 +86,41 @@ public static class McpServer
     private static JsonObject CallTool(JsonObject request, Session session)
     {
         var name = request["params"]?["name"]?.GetValue<string>() ?? "";
-        var spec = Registry.Find(name);
-        if (spec is null)
-            return ToolError($"unknown tool '{name}'");
         var arguments = request["params"]?["arguments"] as JsonObject ?? new JsonObject();
-        var argv = new List<string>();
-        foreach (var (key, value) in arguments)
-        {
-            var flag = spec.Flags.FirstOrDefault(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase));
-            if (flag is null) return ToolError($"unknown argument '{key}' for '{name}'");
-            if (flag.Kind == FlagKind.Flag)
-            {
-                if (value is JsonValue v && v.TryGetValue<bool>(out var b) && b) argv.Add($"--{key}");
-                continue;
-            }
-            var text = value is JsonValue jv && jv.TryGetValue<string>(out var s)
-                ? s
-                : value?.ToJsonString(Options) ?? "";
-            argv.Add($"--{key}");
-            argv.Add(text);
-        }
-
-        var (args, failure) = Registry.Parse(spec, argv.ToArray());
-        if (failure is not null) return EnvelopeResult(failure);
-        var envelope = spec!.Run(args!, session);
-        return EnvelopeResult(envelope);
+        return EnvelopeResult(Handlers.Dispatch(name, arguments, session));
     }
 
-    /// <summary>Structured content carries the envelope; text content is a one-line summary, never the envelope again.</summary>
+    /// <summary>Structured content carries the envelope; text is a one-line summary; inline screenshots become image blocks.</summary>
     private static JsonObject EnvelopeResult(Envelope envelope)
     {
+        var structured = JsonSerializer.SerializeToNode(envelope, EnvelopeJson.Options)?.AsObject() ?? new JsonObject();
+        var image = TakeInlineImage(structured);
+        var text = EnvelopeJson.Summarize(envelope);
+        if (image is not null) text += " (screenshot attached)";
+        var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = text } };
+        if (image is not null) content.Add(image);
         return new JsonObject
         {
-            ["content"] = new JsonArray
-            {
-                new JsonObject { ["type"] = "text", ["text"] = EnvelopeJson.Summarize(envelope) },
-            },
-            ["structuredContent"] = JsonSerializer.SerializeToNode(envelope, EnvelopeJson.Options),
+            ["content"] = content,
+            ["structuredContent"] = structured,
             ["isError"] = !envelope.Ok,
+        };
+    }
+
+    /// <summary>Lifts screenshot bytes out of the structured envelope into a dedicated image block,
+    /// and drops them from the JSON so the payload is not carried twice.</summary>
+    private static JsonObject? TakeInlineImage(JsonObject structured)
+    {
+        if (structured["data"] is not JsonObject data) return null;
+        var format = data["format"]?.GetValue<string>();
+        if (format is not ("png" or "jpg" or "jpeg")) return null;
+        if (data["data"] is not JsonValue value || !value.TryGetValue<string>(out var encoded)) return null;
+        data.Remove("data");
+        return new JsonObject
+        {
+            ["type"] = "image",
+            ["data"] = encoded,
+            ["mimeType"] = format == "png" ? "image/png" : "image/jpeg",
         };
     }
 

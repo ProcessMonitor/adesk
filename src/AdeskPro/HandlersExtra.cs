@@ -1,0 +1,362 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Windows.Automation;
+using AdeskPro.Ui;
+
+namespace AdeskPro;
+
+/// <summary>Window ops, headed mouse, screenshot, wait and batch — the second half of the command surface.</summary>
+public static partial class Handlers
+{
+    // --- single dispatch entry shared by the CLI registry, MCP tools and batch ---
+
+    /// <summary>Validates arguments against the command spec and runs it. The one path every caller goes through.</summary>
+    public static Envelope Dispatch(string name, JsonObject arguments, Session session)
+    {
+        var spec = Registry.Find(name);
+        if (spec is null)
+            return Envelope.Fail(ErrorCodes.InvalidArgs, $"unknown command '{name}'", "run 'adesk-pro --help'");
+        var args = new Args { Command = spec.Name };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in arguments)
+        {
+            var flag = spec.Flags.FirstOrDefault(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase));
+            if (flag is null)
+                return Envelope.Fail(ErrorCodes.InvalidArgs, $"unknown flag --{key} for '{name}'",
+                    $"run 'adesk-pro {name} --help'");
+            if (!seen.Add(flag.Name))
+                return Envelope.Fail(ErrorCodes.InvalidArgs, $"--{key} given twice");
+            switch (flag.Kind)
+            {
+                case FlagKind.Flag:
+                    if (value is JsonValue bv && bv.TryGetValue<bool>(out var b)) args.Set(flag.Name, b);
+                    else args.Set(flag.Name, true);
+                    break;
+                case FlagKind.Integer:
+                    if (value is JsonValue iv && iv.TryGetValue<int>(out var n)) args.Set(flag.Name, n);
+                    else if (value is JsonValue sv2 && sv2.TryGetValue<string>(out var si) && int.TryParse(si, out var n2)) args.Set(flag.Name, n2);
+                    else return Envelope.Fail(ErrorCodes.InvalidArgs, $"--{key} expects an integer");
+                    break;
+                case FlagKind.Ref:
+                    var refText = value is JsonValue rv && rv.TryGetValue<string>(out var rs) ? rs : value?.ToJsonString() ?? "";
+                    if (Ids.ParseRef(refText) is null)
+                        return Envelope.Fail(ErrorCodes.InvalidArgs, $"--{key}: '{refText}' is not a ref like @s8f3k2p9:e8");
+                    args.Set(flag.Name, refText);
+                    break;
+                default:
+                    var text = value is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : value?.ToJsonString() ?? "";
+                    args.Set(flag.Name, text);
+                    break;
+            }
+        }
+        foreach (var f in spec.Flags.Where(f => f.Required && !args.Has(f.Name)))
+            return Envelope.Fail(ErrorCodes.InvalidArgs, $"--{f.Name} is required for '{name}'");
+        return spec.Run(args, session);
+    }
+
+    // --- screenshot ---
+
+    public static Envelope ScreenshotCmd(Args a, Session s)
+    {
+        try
+        {
+            var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
+            var hwnd = info.Hwnd;
+            try { if (hwnd <= 0) hwnd = window.Current.NativeWindowHandle; }
+            catch (ElementNotAvailableException) { }
+            if (hwnd <= 0)
+                return Envelope.Fail(ErrorCodes.NotSupported, "this window has no native handle to capture");
+            var png = Screenshot.CapturePng(hwnd);
+            var data = new JsonObject
+            {
+                ["command"] = "screenshot",
+                ["app"] = info.Name,
+                ["format"] = "png",
+            };
+            var outPath = a.Str("out");
+            if (outPath.Length > 0)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
+                File.WriteAllBytes(outPath, png);
+                data["path"] = Path.GetFullPath(outPath);
+                data["bytes"] = png.Length;
+            }
+            else
+            {
+                data["data"] = Convert.ToBase64String(png);
+            }
+            return Envelope.Good(data);
+        }
+        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk-pro list-apps'"); }
+        catch (AmbiguousWindowException ex) { return AmbiguousWindows(ex); }
+        catch (ArgumentException ex) { return Envelope.Fail(ErrorCodes.NotSupported, ex.Message); }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    // --- wait ---
+
+    public static Envelope Wait(Args a, Session s)
+    {
+        var timeout = Math.Max(500, a.Int("timeout", 10000));
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeout);
+        try
+        {
+            if (a.Str("ref") is { Length: > 0 } token)
+            {
+                var until = a.Str("until", "enabled");
+                if (until is not ("enabled" or "visible" or "gone"))
+                    return Envelope.Fail(ErrorCodes.InvalidArgs, "--until must be enabled, visible or gone");
+                var parsed = Ids.ParseRef(token);
+                if (parsed is null) return Envelope.Fail(ErrorCodes.InvalidArgs, $"'{token}' is not a ref");
+                var (sid, index) = parsed.Value;
+                var entry = s.Refs.Load(sid)?.GetValueOrDefault(index);
+                if (entry is null) return Envelope.Fail(ErrorCodes.StaleRef, $"snapshot '{sid}' is unknown or expired");
+                while (DateTime.UtcNow < deadline)
+                {
+                    var resolved = UiASource.Resolve(entry);
+                    var met = until switch
+                    {
+                        "gone" => resolved.Element is null,
+                        "enabled" => resolved.Element?.Current.IsEnabled == true,
+                        "visible" => resolved.Element is not null && !resolved.Element.Current.IsOffscreen,
+                        _ => false,
+                    };
+                    if (met)
+                        return Envelope.Good(new JsonObject
+                        {
+                            ["command"] = "wait", ["kind"] = "ref", ["until"] = until,
+                            ["result"] = "met", ["waitedMs"] = timeout - Remaining(deadline),
+                        });
+                    Thread.Sleep(300);
+                }
+                return Envelope.Good(new JsonObject
+                {
+                    ["command"] = "wait", ["kind"] = "ref", ["until"] = until,
+                    ["result"] = "timeout", ["timeout"] = timeout,
+                });
+            }
+            if (!string.IsNullOrWhiteSpace(a.Str("app")))
+            {
+                var app = a.Str("app");
+                while (DateTime.UtcNow < deadline)
+                {
+                    if (WindowOps.MatchWindows(app, OptInt(a, "pid"), null).Count > 0)
+                        return Envelope.Good(new JsonObject
+                        {
+                            ["command"] = "wait", ["kind"] = "window", ["app"] = app,
+                            ["result"] = "appeared", ["waitedMs"] = timeout - Remaining(deadline),
+                        });
+                    Thread.Sleep(300);
+                }
+                return Envelope.Good(new JsonObject
+                {
+                    ["command"] = "wait", ["kind"] = "window", ["app"] = app,
+                    ["result"] = "timeout", ["timeout"] = timeout,
+                });
+            }
+            return Envelope.Fail(ErrorCodes.InvalidArgs, "wait needs --app or --ref");
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    private static int Remaining(DateTime deadline) =>
+        Math.Max(0, (int)(deadline - DateTime.UtcNow).TotalMilliseconds);
+
+    // --- batch ---
+
+    public static Envelope Batch(Args a, Session s)
+    {
+        string? json = a.Has("stdin") ? Console.In.ReadToEnd()
+            : a.Str("file") is { Length: > 0 } file ? File.ReadAllText(file)
+            : null;
+        if (string.IsNullOrWhiteSpace(json))
+            return Envelope.Fail(ErrorCodes.InvalidArgs, "--stdin or --file with a JSON array is required");
+        JsonArray? items;
+        try { items = JsonNode.Parse(json) as JsonArray; }
+        catch (JsonException ex) { return Envelope.Fail(ErrorCodes.InvalidArgs, $"batch input is not valid JSON: {ex.Message}"); }
+        if (items is null)
+            return Envelope.Fail(ErrorCodes.InvalidArgs, "batch input must be a JSON array of {command, arguments}");
+        var stopOnError = a.Has("stop-on-error");
+        var results = new JsonArray();
+        var allOk = true;
+        var ran = 0;
+        foreach (var item in items)
+        {
+            if (item is not JsonObject obj)
+            {
+                allOk = false;
+                results.Add(new JsonObject { ["error"] = "each batch item must be an object" });
+                if (stopOnError) break;
+                continue;
+            }
+            var name = obj["command"]?.GetValue<string>() ?? "";
+            var arguments = obj["arguments"] as JsonObject ?? new JsonObject();
+            var envelope = Dispatch(name, arguments, s);
+            ran++;
+            if (!envelope.Ok) allOk = false;
+            var entryOut = new JsonObject { ["command"] = name, ["ok"] = envelope.Ok };
+            if (envelope.Ok) entryOut["data"] = envelope.Data;
+            else if (envelope.Error is not null)
+                entryOut["error"] = JsonSerializer.SerializeToNode(envelope.Error, EnvelopeJson.Options);
+            results.Add(entryOut);
+            if (!envelope.Ok && stopOnError) break;
+        }
+        return Envelope.Good(new JsonObject
+        {
+            ["command"] = "batch",
+            ["ran"] = ran,
+            ["ok"] = allOk,
+            ["stopped"] = stopOnError && !allOk && ran < items.Count,
+            ["results"] = results,
+        });
+    }
+
+    // --- app lifecycle and window geometry ---
+
+    public static Envelope Launch(Args a, Session s)
+    {
+        try
+        {
+            var (pid, hwnd, name) = WindowOps.Launch(a.Str("exe"), a.Str("args"));
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = "launch",
+                ["exe"] = a.Str("exe"),
+                ["pid"] = pid,
+                ["hwnd"] = hwnd,
+                ["window"] = name,
+            });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    public static Envelope CloseApp(Args a, Session s)
+    {
+        try
+        {
+            var closed = WindowOps.CloseApp(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), a.Has("force"));
+            return Envelope.Good(new JsonObject { ["command"] = "close-app", ["closed"] = closed });
+        }
+        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message); }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    public static Envelope Minimize(Args a, Session s) => WindowState(a, WindowVisualState.Minimized, "minimize");
+    public static Envelope Maximize(Args a, Session s) => WindowState(a, WindowVisualState.Maximized, "maximize");
+
+    public static Envelope Restore(Args a, Session s) => WindowState(a, WindowVisualState.Normal, "restore");
+
+    private static Envelope WindowState(Args a, WindowVisualState state, string command)
+    {
+        try
+        {
+            var changed = WindowOps.SetWindowState(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"), state);
+            if (changed == 0) return Envelope.Fail(ErrorCodes.NoPattern, "no matched window exposes the Window pattern");
+            return Envelope.Good(new JsonObject { ["command"] = command, ["changed"] = changed });
+        }
+        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message); }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    public static Envelope MoveWindow(Args a, Session s) => Geometry(a, "move-window", resize: false);
+    public static Envelope ResizeWindow(Args a, Session s) => Geometry(a, "resize-window", resize: true);
+
+    private static Envelope Geometry(Args a, string command, bool resize)
+    {
+        try
+        {
+            var windows = WindowOps.MatchWindows(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
+            if (windows.Count == 0) return Envelope.Fail(ErrorCodes.AppNotFound, "no window matches the filter");
+            if (windows.Count > 1) return AmbiguousWindows(new AmbiguousWindowException(windows));
+            var info = windows[0];
+            int x = a.Int("x", -1), y = a.Int("y", -1), w = a.Int("w", -1), h = a.Int("h", -1);
+            if (resize && (w < 0 || h < 0))
+                return Envelope.Fail(ErrorCodes.InvalidArgs, "--w and --h are required for resize-window");
+            if (!resize && x < 0 && y < 0)
+                return Envelope.Fail(ErrorCodes.InvalidArgs, "give --x and/or --y for move-window");
+            WindowOps.MoveResize(info.Hwnd,
+                x >= 0 ? x : null, y >= 0 ? y : null,
+                resize ? w : null, resize ? h : null);
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = command, ["hwnd"] = info.Hwnd,
+                ["x"] = x, ["y"] = y, ["w"] = w, ["h"] = h,
+            });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    // --- headed mouse ---
+
+    public static Envelope MouseClick(Args a, Session s)
+    {
+        try
+        {
+            Actions.MouseClick(a.Int("x"), a.Int("y"), a.Has("right"), a.Has("double"));
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = "mouse-click", ["x"] = a.Int("x"), ["y"] = a.Int("y"),
+                ["button"] = a.Has("right") ? "right" : "left",
+                ["delivered"] = true,
+                ["disposition"] = new JsonObject { ["delivery"] = "delivered", ["retry"] = "unsafe" },
+            });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    public static Envelope Hover(Args a, Session s)
+    {
+        try
+        {
+            Actions.Hover(a.Int("x"), a.Int("y"));
+            return Envelope.Good(new JsonObject { ["command"] = "hover", ["x"] = a.Int("x"), ["y"] = a.Int("y") });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    public static Envelope Drag(Args a, Session s)
+    {
+        try
+        {
+            Actions.Drag(a.Int("from-x"), a.Int("from-y"), a.Int("to-x"), a.Int("to-y"));
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = "drag",
+                ["from"] = new JsonObject { ["x"] = a.Int("from-x"), ["y"] = a.Int("from-y") },
+                ["to"] = new JsonObject { ["x"] = a.Int("to-x"), ["y"] = a.Int("to-y") },
+                ["delivered"] = true,
+                ["disposition"] = new JsonObject { ["delivery"] = "delivered", ["retry"] = "unsafe" },
+            });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+}
+
+/// <summary>Scope-path math for drill-downs, kept pure so it can be tested without UIA.</summary>
+public static class DrillMath
+{
+    /// <summary>Merges a fresh subtree walk into an existing snapshot: keeps entries outside the subtree,
+    /// composes fresh scope paths onto the drilled root's path, re-indexes from the highest existing id.</summary>
+    public static (Dictionary<int, RefEntry> Merged, Dictionary<int, int> LocalToGlobal) Merge(
+        Dictionary<int, RefEntry> existing, int rootIndex, RefEntry root, Dictionary<int, RefEntry> fresh)
+    {
+        static bool StrictlyInside(List<int> scope, List<int> rootPath) =>
+            scope.Count > rootPath.Count && !scope.Take(rootPath.Count).Where((v, i) => v != rootPath[i]).Any();
+
+        var merged = existing
+            .Where(kv => kv.Key == rootIndex || !StrictlyInside(kv.Value.ScopePath, root.ScopePath))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var localToGlobal = new Dictionary<int, int>();
+        var next = existing.Count > 0 ? existing.Keys.Max() + 1 : 1;
+        foreach (var (local, entry) in fresh)
+        {
+            entry.ScopePath = root.ScopePath.Concat(entry.ScopePath).ToList();
+            entry.WindowName = root.WindowName;
+            merged[next] = entry;
+            localToGlobal[local] = next;
+            next++;
+        }
+        return (merged, localToGlobal);
+    }
+}

@@ -39,6 +39,14 @@ public sealed class Session
 /// <summary>The one table that defines every command. Nothing else hard-codes a command name.</summary>
 public static class Registry
 {
+    /// <summary>Shared window-target flags for the lifecycle/geometry commands.</summary>
+    private static readonly FlagSpec[] WindowTarget =
+    [
+        new FlagSpec("app", FlagKind.String, false, "Process/window title match"),
+        new FlagSpec("pid", FlagKind.Integer, false, "Process id"),
+        new FlagSpec("hwnd", FlagKind.Integer, false, "Window handle"),
+    ];
+
     public static readonly CommandSpec[] Commands =
     [
         new("status", "Show platform, session and store info.", [],
@@ -110,6 +118,56 @@ public static class Registry
             [new FlagSpec("text", FlagKind.Text, false, "Text"),
              new FlagSpec("stdin", FlagKind.Flag, false, "Read text from stdin")],
             (a, s) => Handlers.ClipboardSet(a, s)),
+        new("screenshot", "Capture a window to a PNG (write to --out, or inline base64).",
+            [.. WindowTarget, new FlagSpec("out", FlagKind.String, false, "PNG output path; omit for inline base64")],
+            (a, s) => Handlers.ScreenshotCmd(a, s)),
+        new("wait", "Poll until a window appears or a ref turns enabled/visible/gone.",
+            [.. WindowTarget, new FlagSpec("ref", FlagKind.Ref, false, "Element to wait on"),
+             new FlagSpec("until", FlagKind.String, false, "enabled | visible | gone (default enabled)"),
+             new FlagSpec("timeout", FlagKind.Integer, false, "Milliseconds (default 10000)")],
+            (a, s) => Handlers.Wait(a, s)),
+        new("batch", "Run several commands sequentially in this one process.",
+            [new FlagSpec("stdin", FlagKind.Flag, false, "Read the JSON batch array from stdin"),
+             new FlagSpec("file", FlagKind.String, false, "JSON batch array file"),
+             new FlagSpec("stop-on-error", FlagKind.Flag, false, "Stop at the first failed command")],
+            (a, s) => Handlers.Batch(a, s)),
+        new("launch", "Start a program and return its top-level window.",
+            [new FlagSpec("exe", FlagKind.String, true, "Executable path"),
+             new FlagSpec("args", FlagKind.String, false, "Command-line arguments")],
+            (a, s) => Handlers.Launch(a, s)),
+        new("close-app", "Close an app's windows via the Window pattern.",
+            [.. WindowTarget, new FlagSpec("force", FlagKind.Flag, false, "Kill the process as a fallback")],
+            (a, s) => Handlers.CloseApp(a, s)),
+        new("minimize", "Minimize an app's windows.", [.. WindowTarget],
+            (a, s) => Handlers.Minimize(a, s)),
+        new("maximize", "Maximize an app's windows.", [.. WindowTarget],
+            (a, s) => Handlers.Maximize(a, s)),
+        new("restore", "Restore an app's windows.", [.. WindowTarget],
+            (a, s) => Handlers.Restore(a, s)),
+        new("move-window", "Move a window.",
+            [.. WindowTarget, new FlagSpec("x", FlagKind.Integer, false, "New X"),
+             new FlagSpec("y", FlagKind.Integer, false, "New Y")],
+            (a, s) => Handlers.MoveWindow(a, s)),
+        new("resize-window", "Resize a window.",
+            [.. WindowTarget, new FlagSpec("w", FlagKind.Integer, true, "New width"),
+             new FlagSpec("h", FlagKind.Integer, true, "New height")],
+            (a, s) => Handlers.ResizeWindow(a, s)),
+        new("mouse-click", "Physical mouse click at screen coordinates (moves the cursor).",
+            [new FlagSpec("x", FlagKind.Integer, true, "Screen X"),
+             new FlagSpec("y", FlagKind.Integer, true, "Screen Y"),
+             new FlagSpec("right", FlagKind.Flag, false, "Right button"),
+             new FlagSpec("double", FlagKind.Flag, false, "Double click")],
+            (a, s) => Handlers.MouseClick(a, s)),
+        new("hover", "Move the cursor to screen coordinates.",
+            [new FlagSpec("x", FlagKind.Integer, true, "Screen X"),
+             new FlagSpec("y", FlagKind.Integer, true, "Screen Y")],
+            (a, s) => Handlers.Hover(a, s)),
+        new("drag", "Press, move, release — from one point to another.",
+            [new FlagSpec("from-x", FlagKind.Integer, true, "Start X"),
+             new FlagSpec("from-y", FlagKind.Integer, true, "Start Y"),
+             new FlagSpec("to-x", FlagKind.Integer, true, "End X"),
+             new FlagSpec("to-y", FlagKind.Integer, true, "End Y")],
+            (a, s) => Handlers.Drag(a, s)),
     ];
 
     public static CommandSpec? Find(string name) =>

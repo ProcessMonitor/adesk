@@ -6,7 +6,7 @@ using AdeskPro.Ui;
 namespace AdeskPro;
 
 /// <summary>Command implementations. Every handler returns one Envelope; UIA exceptions map to error codes.</summary>
-public static class Handlers
+public static partial class Handlers
 {
     public static Envelope Status(Args a, Session s) => Envelope.Good(new JsonObject
     {
@@ -65,15 +65,11 @@ public static class Handlers
     {
         try
         {
+            if (a.Str("root") is { Length: > 0 } rootToken) return Drill(a, s, rootToken);
+
             var (window, info) = UiASource.FindWindow(a.Str("app"), OptInt(a, "pid"), OptLong(a, "hwnd"));
             var source = UiASource.ForWindow(window);
-            var result = Walker.Walk(source, new Walker.Options
-            {
-                InteractiveOnly = a.Has("i"),
-                Skeleton = a.Has("skeleton"),
-                MaxDepth = a.Int("max-depth", 0) > 0 ? a.Int("max-depth") : null,
-                Budget = new WalkBudget { DeadlineMs = a.Int("timeout-ms", 5000) },
-            });
+            var result = WalkWithOptions(a, source);
 
             var sid = Ids.NewSnapshotId();
             foreach (var e in result.Refs.Values) e.WindowName = info.Name;
@@ -98,6 +94,73 @@ public static class Handlers
         catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk-pro list-apps' to see candidates"); }
         catch (AmbiguousWindowException ex) { return AmbiguousWindows(ex); }
         catch (Exception ex) { return Internal(ex); }
+    }
+
+    /// <summary>Re-drills one subtree of an existing snapshot; refs inside the subtree are replaced, everything else stays valid.</summary>
+    private static Envelope Drill(Args a, Session s, string rootToken)
+    {
+        var parsed = Ids.ParseRef(rootToken);
+        if (parsed is null) return Envelope.Fail(ErrorCodes.InvalidArgs, $"'{rootToken}' is not a ref like @s8f3k2p9:e8");
+        var (sid, rootIndex) = parsed.Value;
+        var entries = s.Refs.Load(sid);
+        if (entries is null || !entries.TryGetValue(rootIndex, out var rootEntry))
+            return Envelope.Fail(ErrorCodes.StaleRef, $"snapshot '{sid}' is unknown or expired", "take a new snapshot");
+        try
+        {
+            var resolved = UiASource.Resolve(rootEntry);
+            if (resolved.Element is null)
+                return Envelope.Fail(ErrorCodes.StaleRef, "the element or its window is gone",
+                    "take a fresh full snapshot", details: new JsonObject { ["kind"] = "element_absent" });
+
+            var source = UiASource.ForElement(resolved.Element);
+            var result = WalkWithOptions(a, source);
+            var (merged, localToGlobal) = MergeDrill(entries, rootIndex, rootEntry, result.Refs);
+            StampDrilled(result.Root, sid, localToGlobal);
+            s.Refs.Save(sid, merged);
+            return Envelope.Good(new JsonObject
+            {
+                ["command"] = "snapshot",
+                ["drilled"] = rootToken,
+                ["pid"] = rootEntry.Pid,
+                ["process"] = rootEntry.ProcessName,
+                ["snapshotId"] = sid,
+                ["refCount"] = merged.Count,
+                ["nodeCount"] = result.NodeCount,
+                ["complete"] = result.Complete,
+                ["tree"] = ToJson(result.Root, a.Has("skeleton")),
+            });
+        }
+        catch (AmbiguousTargetException ex)
+        {
+            return Envelope.Fail(ErrorCodes.AmbiguousTarget, ex.Message,
+                details: new JsonObject { ["kind"] = "identity_ambiguous" });
+        }
+        catch (Exception ex) { return Internal(ex); }
+    }
+
+    private static WalkResult WalkWithOptions(Args a, Walker.ISource source) =>
+        Walker.Walk(source, new Walker.Options
+        {
+            InteractiveOnly = a.Has("i"),
+            Skeleton = a.Has("skeleton"),
+            MaxDepth = a.Int("max-depth", 0) > 0 ? a.Int("max-depth") : null,
+            Budget = new WalkBudget { DeadlineMs = a.Int("timeout-ms", 5000) },
+        });
+
+    /// <summary>Delegates the scope-path math to the pure, unit-tested DrillMath.</summary>
+    private static (Dictionary<int, RefEntry> Merged, Dictionary<int, int> LocalToGlobal) MergeDrill(
+        Dictionary<int, RefEntry> existing, int rootIndex, RefEntry root, Dictionary<int, RefEntry> fresh)
+        => DrillMath.Merge(existing, rootIndex, root, fresh);
+
+    private static void StampDrilled(UiNodeData n, string sid, Dictionary<int, int> localToGlobal)
+    {
+        if (n.Ref is not null)
+        {
+            n.Ref = Ids.ParseRef(n.Ref) is { } p && localToGlobal.TryGetValue(p.Index, out var global)
+                ? Ids.FormatRef(sid, global)
+                : null;
+        }
+        foreach (var child in n.Children) StampDrilled(child, sid, localToGlobal);
     }
 
     public static Envelope Find(Args a, Session s)
@@ -377,20 +440,7 @@ public static class Handlers
     private static int? OptInt(Args a, string name) => a.Int(name, 0) > 0 ? a.Int(name) : null;
     private static long? OptLong(Args a, string name) => a.Int(name, 0) > 0 ? a.Int(name) : null;
 
-    private static IReadOnlyList<WindowInfo> TopWindows()
-    {
-        var list = new List<WindowInfo>();
-        foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition))
-        {
-            try
-            {
-                if (w.Current.ControlType != ControlType.Window) continue;
-                list.Add(UiASource.InfoOf(w));
-            }
-            catch (ElementNotAvailableException) { }
-        }
-        return list;
-    }
+    private static IReadOnlyList<WindowInfo> TopWindows() => UiASource.TopWindows();
 
     private static JsonObject? ToJson(UiNodeData n, bool skeleton)
     {

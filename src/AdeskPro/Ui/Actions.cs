@@ -155,6 +155,68 @@ public static class Actions
             throw new Win32Exception(Marshal.GetLastWin32Error(), "SendInput was blocked");
     }
 
+    // --- headed mouse: explicit physical input, opt-in per command ---
+
+    private const uint MouseEventfMove = 0x0001;
+    private const uint MouseEventfLeftDown = 0x0002;
+    private const uint MouseEventfLeftUp = 0x0004;
+    private const uint MouseEventfRightDown = 0x0008;
+    private const uint MouseEventfRightUp = 0x0010;
+
+    public static void Hover(int x, int y)
+    {
+        if (!SetCursorPos(x, y))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed");
+    }
+
+    public static void MouseClick(int x, int y, bool right, bool doubleClick)
+    {
+        Hover(x, y);
+        var down = right ? MouseEventfRightDown : MouseEventfLeftDown;
+        var up = right ? MouseEventfRightUp : MouseEventfLeftUp;
+        Send([MouseInput(down)]);
+        Send([MouseInput(up)]);
+        if (doubleClick)
+        {
+            Thread.Sleep(80);
+            Send([MouseInput(down)]);
+            Send([MouseInput(up)]);
+        }
+    }
+
+    public static void Drag(int fromX, int fromY, int toX, int toY)
+    {
+        Hover(fromX, fromY);
+        Send([MouseInput(MouseEventfLeftDown)]);
+        var steps = Math.Max(8, (Math.Abs(toX - fromX) + Math.Abs(toY - fromY)) / 20);
+        for (var i = 1; i <= steps; i++)
+        {
+            Send([MouseMoveInput(fromX + (toX - fromX) * i / steps, fromY + (toY - fromY) * i / steps)]);
+            Thread.Sleep(10);
+        }
+        Send([MouseInput(MouseEventfLeftUp)]);
+    }
+
+    private static INPUT MouseInput(uint flags) => new()
+    {
+        Type = 2, // MOUSE
+        U = new InputUnion
+        {
+            Mi = new MOUSEINPUT { Dx = 0, Dy = 0, MouseData = 0, Flags = flags, Time = 0, ExtraInfo = IntPtr.Zero },
+        },
+    };
+
+    private static INPUT MouseMoveInput(int x, int y) => new()
+    {
+        Type = 2,
+        U = new InputUnion
+        {
+            Mi = new MOUSEINPUT { Dx = x, Dy = y, MouseData = 0, Flags = MouseEventfMove, Time = 0, ExtraInfo = IntPtr.Zero },
+        },
+    };
+
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+
     private static ushort MapKey(string name)
     {
         var k = name.ToLowerInvariant();
