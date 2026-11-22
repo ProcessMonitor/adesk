@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
-using Adesk.Ui;
+using AdeskPro.Ui;
 
-namespace Adesk;
+namespace AdeskPro;
 
 /// <summary>A command flag, shared by the CLI parser, --help text and the MCP JSON schema.</summary>
 public sealed record FlagSpec(string Name, FlagKind Kind, bool Required, string Description);
@@ -126,7 +126,7 @@ public static class Registry
             if (!token.StartsWith('-') || token == "-")
                 return (null, Envelope.Fail(ErrorCodes.InvalidArgs,
                     $"Unexpected positional argument '{token}'",
-                    $"Every argument to '{spec.Name}' is a flag; run 'adesk {spec.Name} --help'."));
+                    $"Every argument to '{spec.Name}' is a flag; run 'adesk-pro {spec.Name} --help'."));
             var body = token.StartsWith("--") ? token[2..] : token[1..];
             string key, value;
             var eq = body.IndexOf('=');
@@ -171,20 +171,20 @@ public static class Registry
         foreach (var f in spec.Flags.Where(f => f.Required && !args.Has(f.Name)))
             return (null, Envelope.Fail(ErrorCodes.InvalidArgs,
                 $"--{f.Name} is required for '{spec.Name}'",
-                $"Run 'adesk {spec.Name} --help'."));
+                $"Run 'adesk-pro {spec.Name} --help'."));
         return (args, null);
     }
 
     private static Envelope Unknown(CommandSpec spec, string key) =>
         Envelope.Fail(ErrorCodes.InvalidArgs, $"Unknown flag --{key} for '{spec.Name}'",
-            $"Run 'adesk {spec.Name} --help'.");
+            $"Run 'adesk-pro {spec.Name} --help'.");
 
     private static Envelope Bad(CommandSpec spec, string key) =>
         Envelope.Fail(ErrorCodes.InvalidArgs, $"--{key} needs a value");
 
     public static string HelpText(CommandSpec spec)
     {
-        var lines = new List<string> { $"adesk {spec.Name} — {spec.Description}" };
+        var lines = new List<string> { $"adesk-pro {spec.Name} — {spec.Description}" };
         foreach (var f in spec.Flags)
         {
             var kind = f.Kind switch

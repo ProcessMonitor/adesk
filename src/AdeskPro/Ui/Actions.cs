@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 
-namespace Adesk.Ui;
+namespace AdeskPro.Ui;
 
 public sealed class NoPatternException(string what, string suggestion) : Exception(what)
 {
@@ -36,13 +36,13 @@ public static class Actions
             return "toggle";
         }
         throw new NoPatternException("element has no invoke/expand/select/toggle pattern",
-            "use 'adesk press' with a shortcut the app exposes, or set focus first");
+            "use 'adesk-pro press' with a shortcut the app exposes, or set focus first");
     }
 
     public static string Toggle(AutomationElement el)
     {
         if (!el.TryGetCurrentPattern(TogglePattern.Pattern, out var toggle))
-            throw new NoPatternException("element has no toggle pattern", "try 'adesk click' instead");
+            throw new NoPatternException("element has no toggle pattern", "try 'adesk-pro click' instead");
         ((TogglePattern)toggle).Toggle();
         return "toggle";
     }
@@ -50,7 +50,7 @@ public static class Actions
     public static string Expand(AutomationElement el, bool collapse)
     {
         if (!el.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expand))
-            throw new NoPatternException("element has no expandcollapse pattern", "try 'adesk click'");
+            throw new NoPatternException("element has no expandcollapse pattern", "try 'adesk-pro click'");
         var pattern = (ExpandCollapsePattern)expand;
         if (collapse) pattern.Collapse(); else pattern.Expand();
         return collapse ? "collapse" : "expand";
@@ -59,7 +59,7 @@ public static class Actions
     public static string Select(AutomationElement el)
     {
         if (!el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var select))
-            throw new NoPatternException("element has no selectionitem pattern", "try 'adesk click'");
+            throw new NoPatternException("element has no selectionitem pattern", "try 'adesk-pro click'");
         ((SelectionItemPattern)select).Select();
         return "select";
     }
@@ -83,7 +83,7 @@ public static class Actions
     {
         if (!el.TryGetCurrentPattern(ValuePattern.Pattern, out var value))
             throw new NoPatternException("element has no value pattern",
-                "only editable controls expose the Value pattern; try 'adesk type' for keyboard entry");
+                "only editable controls expose the Value pattern; try 'adesk-pro type' for keyboard entry");
         ((ValuePattern)value).SetValue(text);
         return "value";
     }
@@ -103,7 +103,7 @@ public static class Actions
             }
         }
         throw new NoPatternException("no scrollable ancestor found",
-            "the ref may sit in a virtualized list; try scrolling with 'adesk press pgdn' after focusing");
+            "the ref may sit in a virtualized list; try scrolling with 'adesk-pro press pgdn' after focusing");
     }
 
     public static string FocusEl(AutomationElement el)

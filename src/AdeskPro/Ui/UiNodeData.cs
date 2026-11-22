@@ -1,6 +1,6 @@
 using System.Windows.Automation;
 
-namespace Adesk.Ui;
+namespace AdeskPro.Ui;
 
 /// <summary>Everything the walker needs to know about one element, source-agnostic.</summary>
 public sealed class UiNodeData

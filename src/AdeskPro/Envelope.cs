@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
-namespace Adesk;
+namespace AdeskPro;
 
 /// <summary>The one JSON envelope every command prints: ok with data, or ok=false with error.</summary>
 public sealed class Envelope

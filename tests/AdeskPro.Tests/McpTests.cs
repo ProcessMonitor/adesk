@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
 
-namespace Adesk.Tests;
+namespace AdeskPro.Tests;
 
 public class McpTests
 {
@@ -17,7 +17,7 @@ public class McpTests
         Console.SetOut(output);
         try
         {
-            Adesk.Mcp.McpServer.Run("test");
+            AdeskPro.Mcp.McpServer.Run("test");
         }
         finally
         {
@@ -32,7 +32,7 @@ public class McpTests
             responses.Add(node.DeepClone());
             var structured = node["result"]?["structuredContent"];
             if (structured is not null)
-                last = structured.Deserialize<Envelope>(Adesk.EnvelopeJson.Options);
+                last = structured.Deserialize<Envelope>(AdeskPro.EnvelopeJson.Options);
         }
         return (responses, last);
     }
@@ -57,7 +57,7 @@ public class McpTests
 
         var result = responses[0]!["result"]!.AsObject();
         Assert.Equal("2025-03-26", result["protocolVersion"]!.GetValue<string>());
-        Assert.Equal("adesk", result["serverInfo"]!["name"]!.GetValue<string>());
+        Assert.Equal("adesk-pro", result["serverInfo"]!["name"]!.GetValue<string>());
         Assert.NotNull(result["capabilities"]!["tools"]);
     }
 
@@ -66,7 +66,7 @@ public class McpTests
     {
         var (responses, _) = RunServer(Request(1, "tools/list").ToJsonString());
         var tools = responses[0]!["result"]!["tools"]!.AsArray();
-        Assert.Equal(Adesk.Registry.Commands.Length, tools.Count);
+        Assert.Equal(AdeskPro.Registry.Commands.Length, tools.Count);
         var names = tools.Select(t => t!["name"]!.GetValue<string>()).ToList();
         Assert.Contains("snapshot", names);
         Assert.Contains("click", names);

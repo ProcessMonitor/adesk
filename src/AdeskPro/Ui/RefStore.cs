@@ -2,7 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Adesk.Ui;
+namespace AdeskPro.Ui;
 
 /// <summary>What an agent needs to re-identify one element later, possibly in another process.</summary>
 public sealed class RefEntry

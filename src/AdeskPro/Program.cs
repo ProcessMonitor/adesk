@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
-using Adesk.Ui;
+using AdeskPro.Ui;
 
-namespace Adesk;
+namespace AdeskPro;
 
 public static class Program
 {
@@ -15,7 +15,7 @@ public static class Program
         }
         if (argv[0] == "--version" || argv[0] == "version")
         {
-            Console.WriteLine("adesk " + Version.Value);
+            Console.WriteLine("adesk-pro " + Version.Value);
             return 0;
         }
         if (argv[0] == "mcp")
@@ -32,7 +32,7 @@ public static class Program
             Console.WriteLine(EnvelopeJson.Serialize(Envelope.Fail(
                 ErrorCodes.InvalidArgs,
                 commandArgv.Length == 0 ? "no command given" : $"unknown command '{commandArgv[0]}'",
-                "run 'adesk --help'")));
+                "run 'adesk-pro --help'")));
             return 2;
         }
         if (commandArgv.Skip(1).Any(t => t is "--help" or "-h"))
@@ -82,15 +82,15 @@ public static class Program
 
     private static void PrintOverview()
     {
-        Console.WriteLine("adesk — desktop use through accessibility trees (Windows UI Automation)");
+        Console.WriteLine("adesk-pro — desktop use through accessibility trees (Windows UI Automation)");
         Console.WriteLine();
         Console.WriteLine("Usage:");
-        Console.WriteLine("  adesk mcp                    serve every command as MCP tools over stdio");
+        Console.WriteLine("  adesk-pro mcp                    serve every command as MCP tools over stdio");
         foreach (var spec in Registry.Commands)
-            Console.WriteLine($"  adesk {spec.Name,-14}{spec.Description}");
+            Console.WriteLine($"  adesk-pro {spec.Name,-14}{spec.Description}");
         Console.WriteLine();
         Console.WriteLine("Global flags:");
         Console.WriteLine("  --session <name>             isolate snapshot state (default: default)");
-        Console.WriteLine("  --help                       help for a command, e.g. adesk snapshot --help");
+        Console.WriteLine("  --help                       help for a command, e.g. adesk-pro snapshot --help");
     }
 }

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Windows.Automation;
 
-namespace Adesk.Ui;
+namespace AdeskPro.Ui;
 
 public sealed class AppNotFoundException(string message) : Exception(message);
 

@@ -1,7 +1,7 @@
-using Adesk.Ui;
+using AdeskPro.Ui;
 using Xunit;
 
-namespace Adesk.Tests;
+namespace AdeskPro.Tests;
 
 /// <summary>Fake source: children live outside the nodes, so the walker builds them the way it builds UIA trees.</summary>
 internal sealed class FakeSource(UiNodeData root, Dictionary<UiNodeData, List<UiNodeData>> children)
@@ -250,7 +250,7 @@ public class RegistryTests
     [Fact]
     public void Catalog_covers_every_command()
     {
-        var tools = Adesk.Mcp.Catalog.Build();
+        var tools = AdeskPro.Mcp.Catalog.Build();
         Assert.Equal(Registry.Commands.Length, tools.Count);
     }
 }

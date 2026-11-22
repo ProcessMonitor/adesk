@@ -1,9 +1,9 @@
 using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows.Automation;
-using Adesk.Ui;
+using AdeskPro.Ui;
 
-namespace Adesk;
+namespace AdeskPro;
 
 /// <summary>Command implementations. Every handler returns one Envelope; UIA exceptions map to error codes.</summary>
 public static class Handlers
@@ -95,7 +95,7 @@ public static class Handlers
                 ["tree"] = tree,
             });
         }
-        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk list-apps' to see candidates"); }
+        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk-pro list-apps' to see candidates"); }
         catch (AmbiguousWindowException ex) { return AmbiguousWindows(ex); }
         catch (Exception ex) { return Internal(ex); }
     }
@@ -159,7 +159,7 @@ public static class Handlers
                 ["matches"] = matches,
             });
         }
-        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk list-apps'"); }
+        catch (AppNotFoundException ex) { return Envelope.Fail(ErrorCodes.AppNotFound, ex.Message, "run 'adesk-pro list-apps'"); }
         catch (AmbiguousWindowException ex) { return AmbiguousWindows(ex); }
         catch (Exception ex) { return Internal(ex); }
     }
@@ -351,7 +351,7 @@ public static class Handlers
 
     private static Envelope AmbiguousWindows(AmbiguousWindowException ex) =>
         Envelope.Fail(ErrorCodes.AmbiguousWindow, ex.Message,
-            "narrow with --pid or --hwnd; use 'adesk list-windows' for candidates",
+            "narrow with --pid or --hwnd; use 'adesk-pro list-windows' for candidates",
             details: new JsonObject
             {
                 ["windows"] = new JsonArray([.. ex.Windows.Select(w => new JsonObject
@@ -437,7 +437,7 @@ public static class SessionStore
 {
     public static string Dir(string session) =>
         Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "adesk", "sessions", session);
+            "adesk-pro", "sessions", session);
 }
 
 public static class Version

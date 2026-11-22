@@ -1,4 +1,4 @@
-# adesk
+# adesk-pro
 
 **Desktop use for AI agents on Windows** — read and operate native apps through the OS accessibility tree. No screenshots, no pixel matching, no vision model in the loop.
 
@@ -18,34 +18,34 @@ I wanted to know how far a Windows-only core gets with different bets:
 ## Demo (real session)
 
 ```
-$ adesk snapshot --app Notepad -i
+$ adesk-pro snapshot --app Notepad -i
 {"ok":true,"data":{"snapshotId":"sn972n15auotk","refCount":18,"complete":true,
   "tree":{"role":"窗口","name":"无标题 - 记事本","ref":"@sn972n15auotk:e1","children":[
     {"role":"文档","name":"文本编辑器","ref":"@sn972n15auotk:e2","patterns":["scroll"]}, ...]}}}
 
-$ adesk type --ref @sn972n15auotk:e2 --text "adesk roundtrip 你好"
-{"ok":true,"data":{"resolvedBy":"scope-path","how":"keyboard","delivered":true,"value":"adesk roundtrip 你好"}}
+$ adesk-pro type --ref @sn972n15auotk:e2 --text "adesk-pro roundtrip 你好"
+{"ok":true,"data":{"resolvedBy":"scope-path","how":"keyboard","delivered":true,"value":"adesk-pro roundtrip 你好"}}
 
-$ adesk press --app 记事本 --keys ctrl+a
-$ adesk press --app 记事本 --keys ctrl+c
-$ adesk clipboard-get
-{"ok":true,"data":{"text":"adesk roundtrip 你好"}}
+$ adesk-pro press --app 记事本 --keys ctrl+a
+$ adesk-pro press --app 记事本 --keys ctrl+c
+$ adesk-pro clipboard-get
+{"ok":true,"data":{"text":"adesk-pro roundtrip 你好"}}
 ```
 
-Snapshot, act, verify — the loop lives in the calling agent; adesk has no model inside.
+Snapshot, act, verify — the loop lives in the calling agent; adesk-pro has no model inside.
 
 ## Install
 
 Windows 10 1809+ with the .NET 10 runtime.
 
 ```
-dotnet publish src/Adesk/Adesk.csproj -c Release -r win-x64 --self-contained false -o publish
+dotnet publish src/AdeskPro/AdeskPro.csproj -c Release -r win-x64 --self-contained false -o publish
 ```
 
 ## MCP
 
 ```json
-{ "mcpServers": { "adesk": { "command": "publish/adesk.exe", "args": ["mcp"] } } }
+{ "mcpServers": { "adesk-pro": { "command": "publish/adesk-pro.exe", "args": ["mcp"] } } }
 ```
 
 Tool names match the CLI commands (`snapshot`, `click`, `type`, …). Results return full `structuredContent` plus a one-line summary as text.
@@ -75,7 +75,7 @@ Walks run under a budget (depth 30 / siblings 2000 / nodes 5000 / 5s deadline); 
 
 ## Comparison with agent-desktop
 
-| | agent-desktop | adesk |
+| | agent-desktop | adesk-pro |
 |---|---|---|
 | Language | Rust (Windows layer ~77k lines of COM interop) | C# (~2.2k line core on managed UIA) |
 | MCP call model | subprocess per tool call | in-process dispatch, memory-only state |
@@ -84,7 +84,7 @@ Walks run under a budget (depth 30 / siblings 2000 / nodes 5000 / 5s deadline); 
 | Platforms | macOS / Windows / Linux | Windows |
 | Commands | 57 | 17 (MVP) |
 
-agent-desktop is the more complete tool; adesk is a smaller bet with an architecture I find easier to reason about. Both are open source — take your pick.
+agent-desktop is the more complete tool; adesk-pro is a smaller bet with an architecture I find easier to reason about. Both are open source — take your pick.
 
 ## License
 

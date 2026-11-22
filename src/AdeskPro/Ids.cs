@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace Adesk;
+namespace AdeskPro;
 
 /// <summary>Snapshot and ref identifiers: snapshot ids are short opaque tokens, refs are @&lt;sid&gt;:e&lt;n&gt;.</summary>
 public static class Ids

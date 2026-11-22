@@ -4,8 +4,8 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
-    <RootNamespace>Adesk</RootNamespace>
-    <AssemblyName>adesk</AssemblyName>
+    <RootNamespace>AdeskPro</RootNamespace>
+    <AssemblyName>adesk-pro</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>

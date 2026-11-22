@@ -1,4 +1,4 @@
-namespace Adesk.Ui;
+namespace AdeskPro.Ui;
 
 /// <summary>Budget for one walk. Hitting a budget marks the snapshot incomplete instead of lying.</summary>
 public sealed class WalkBudget

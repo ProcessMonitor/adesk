@@ -1,4 +1,4 @@
-# adesk
+# adesk-pro
 
 **给 AI agent 用的 Windows 桌面操作工具** — 通过操作系统无障碍树读写原生应用。不截图、不做像素匹配、循环里没有视觉模型。
 
@@ -18,34 +18,34 @@
 ## 实机演示
 
 ```
-$ adesk snapshot --app Notepad -i
+$ adesk-pro snapshot --app Notepad -i
 {"ok":true,"data":{"snapshotId":"sn972n15auotk","refCount":18,"complete":true,
   "tree":{"role":"窗口","name":"无标题 - 记事本","ref":"@sn972n15auotk:e1","children":[
     {"role":"文档","name":"文本编辑器","ref":"@sn972n15auotk:e2","patterns":["scroll"]}, ...]}}}
 
-$ adesk type --ref @sn972n15auotk:e2 --text "adesk roundtrip 你好"
-{"ok":true,"data":{"resolvedBy":"scope-path","how":"keyboard","delivered":true,"value":"adesk roundtrip 你好"}}
+$ adesk-pro type --ref @sn972n15auotk:e2 --text "adesk-pro roundtrip 你好"
+{"ok":true,"data":{"resolvedBy":"scope-path","how":"keyboard","delivered":true,"value":"adesk-pro roundtrip 你好"}}
 
-$ adesk press --app 记事本 --keys ctrl+a
-$ adesk press --app 记事本 --keys ctrl+c
-$ adesk clipboard-get
-{"ok":true,"data":{"text":"adesk roundtrip 你好"}}
+$ adesk-pro press --app 记事本 --keys ctrl+a
+$ adesk-pro press --app 记事本 --keys ctrl+c
+$ adesk-pro clipboard-get
+{"ok":true,"data":{"text":"adesk-pro roundtrip 你好"}}
 ```
 
-快照 → 操作 → 验证,循环在调用方 agent 手里;adesk 内部没有模型。
+快照 → 操作 → 验证,循环在调用方 agent 手里;adesk-pro 内部没有模型。
 
 ## 安装
 
 Windows 10 1809+,需要 .NET 10 运行时。
 
 ```
-dotnet publish src/Adesk/Adesk.csproj -c Release -r win-x64 --self-contained false -o publish
+dotnet publish src/AdeskPro/AdeskPro.csproj -c Release -r win-x64 --self-contained false -o publish
 ```
 
 ## 接入 MCP
 
 ```json
-{ "mcpServers": { "adesk": { "command": "publish/adesk.exe", "args": ["mcp"] } } }
+{ "mcpServers": { "adesk-pro": { "command": "publish/adesk-pro.exe", "args": ["mcp"] } } }
 ```
 
 工具名和 CLI 命令一一对应(`snapshot`、`click`、`type`…),结果返回完整 `structuredContent` 加一行摘要文本。
@@ -75,7 +75,7 @@ ref 形如 `@<snapshotId>:e<N>`,动作前按三步活体重定位:
 
 ## 与 agent-desktop 对比
 
-| | agent-desktop | adesk |
+| | agent-desktop | adesk-pro |
 |---|---|---|
 | 语言 | Rust(Windows 层约 7.7 万行 COM interop) | C#(managed UIA 上约 2200 行核心) |
 | MCP 调用模型 | 每次工具调用 spawn 子进程 | 进程内 dispatch,纯内存状态 |
@@ -84,7 +84,7 @@ ref 形如 `@<snapshotId>:e<N>`,动作前按三步活体重定位:
 | 平台 | macOS / Windows / Linux | Windows |
 | 命令数 | 57 | 17(MVP) |
 
-agent-desktop 是更完整的工具;adesk 是一个更小的赌注,架构是我觉得更容易推理的那一种。两者都开源,按需取用。
+agent-desktop 是更完整的工具;adesk-pro 是一个更小的赌注,架构是我觉得更容易推理的那一种。两者都开源,按需取用。
 
 ## License
 

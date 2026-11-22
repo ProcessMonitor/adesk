@@ -1,9 +1,9 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Adesk.Ui;
+using AdeskPro.Ui;
 
-namespace Adesk.Mcp;
+namespace AdeskPro.Mcp;
 
 /// <summary>
 /// Stdio MCP server. Every tool call dispatches IN PROCESS through the same Registry as the CLI —
@@ -72,12 +72,12 @@ public static class McpServer
             ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
             ["serverInfo"] = new JsonObject
             {
-                ["name"] = "adesk",
+                ["name"] = "adesk-pro",
                 ["version"] = Version.Value,
-                ["title"] = "adesk — desktop use via accessibility trees",
+                ["title"] = "adesk-pro — desktop use via accessibility trees",
             },
             ["instructions"] =
-                "adesk reads Windows accessibility trees and operates desktop apps. Read the 'snapshot' " +
+                "adesk-pro reads Windows accessibility trees and operates desktop apps. Read the 'snapshot' " +
                 "tool first: take a snapshot of the app, act on refs from it (@sid:eN), then re-snapshot to verify. " +
                 "Retry an action only when its disposition.retry is safe.",
         };
