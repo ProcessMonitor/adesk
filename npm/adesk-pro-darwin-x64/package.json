@@ -1,0 +1,19 @@
+{
+  "name": "adesk-pro-darwin-x64",
+  "version": "0.2.0",
+  "description": "adesk-pro binary for darwin-x64. Installed automatically by the adesk-pro package; not meant to be installed directly.",
+  "license": "MIT",
+  "author": "ProcessMonitor",
+  "homepage": "https://github.com/ProcessMonitor/adesk-pro",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ProcessMonitor/adesk-pro.git"
+  },
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "files": ["bin/"],
+  "engines": {
+    "node": ">=18"
+  }
+}

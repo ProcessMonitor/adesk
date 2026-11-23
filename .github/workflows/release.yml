@@ -1,0 +1,204 @@
+name: release
+
+# Three shipping paths, because they serve different users:
+#   - a tag pushes self-contained binaries to a GitHub Release (no Node, offline users)
+#   - the same tag publishes four npm packages, so `npx -y adesk-pro mcp` just works
+#   - workflow_dispatch builds artifacts without publishing anything
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: "Also publish to npm (needs the NPM_TOKEN secret)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            project: src/AdeskPro/AdeskPro.csproj
+            rid: win-x64
+            artifact: adesk-pro.exe
+            npm_pkg: adesk-pro-win32-x64
+          - name: macos-arm64
+            os: macos-latest
+            project: src/AdeskPro.Mac.Cli/AdeskPro.Mac.Cli.csproj
+            rid: osx-arm64
+            artifact: adesk-pro
+            npm_pkg: adesk-pro-darwin-arm64
+          - name: macos-x64
+            os: macos-latest
+            project: src/AdeskPro.Mac.Cli/AdeskPro.Mac.Cli.csproj
+            rid: osx-x64
+            artifact: adesk-pro
+            npm_pkg: adesk-pro-darwin-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Unit tests
+        run: dotnet test tests/AdeskPro.Tests/AdeskPro.Tests.csproj --configuration Release
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish "${{ matrix.project }}" \
+            --configuration Release \
+            --runtime "${{ matrix.rid }}" \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:DebugType=None \
+            -p:DebugSymbols=false \
+            --output "out/${{ matrix.rid }}"
+
+      - name: Verify the expected file exists
+        shell: bash
+        run: |
+          test -f "out/${{ matrix.rid }}/${{ matrix.artifact }}" || {
+            echo "expected out/${{ matrix.rid }}/${{ matrix.artifact }}" >&2
+            ls -R "out/${{ matrix.rid }}" >&2
+            exit 1
+          }
+
+      - name: Stage into the npm platform package
+        shell: bash
+        run: |
+          dest="npm/${{ matrix.npm_pkg }}/bin/${{ matrix.artifact }}"
+          mkdir -p "$(dirname "$dest")"
+          cp "out/${{ matrix.rid }}/${{ matrix.artifact }}" "$dest"
+          chmod +x "$dest" || true
+
+      - name: Smoke test the binary
+        shell: bash
+        run: |
+          # A cross-arch binary cannot execute here, so only run the host's own build.
+          case "${{ matrix.rid }}" in
+            osx-arm64) [ "$(uname -m)" = "arm64" ] && ./out/osx-arm64/adesk-pro --version ;;
+            osx-x64)   [ "$(uname -m)" = "x86_64" ] && ./out/osx-x64/adesk-pro --version ;;
+            win-x64)   ./out/win-x64/adesk-pro.exe --version ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.rid }}
+          path: out/${{ matrix.rid }}/${{ matrix.artifact }}
+          if-no-files-found: error
+
+      # Platform packages must reach the registry before the launcher that depends on them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.npm_pkg }}
+          path: npm/${{ matrix.npm_pkg }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: stage
+          pattern: binary-*
+
+      - name: Name each binary for download
+        run: |
+          mkdir -p release
+          cp stage/binary-win-x64/adesk-pro.exe     release/adesk-pro-win-x64.exe
+          cp stage/binary-osx-arm64/adesk-pro       release/adesk-pro-osx-arm64
+          cp stage/binary-osx-x64/adesk-pro         release/adesk-pro-osx-x64
+          chmod +x release/adesk-pro-osx-*
+          ls -la release/
+
+      - name: Checksums
+        run: |
+          cd release
+          for f in *; do sha256sum "$f" >> SHA256SUMS.txt; done
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            Two ways to install — pick one.
+
+            **npm (one line, recommended)**
+            ```
+            npx -y adesk-pro doctor
+            ```
+            MCP config:
+            ```json
+            { "mcpServers": { "adesk-pro": { "command": "npx", "args": ["-y", "adesk-pro", "mcp"] } } }
+            ```
+
+            **Direct binary (no Node required)**
+            Download `adesk-pro-win-x64.exe`, `adesk-pro-osx-arm64` or `adesk-pro-osx-x64`, then
+            run `adesk-pro doctor`.
+
+            The macOS binaries are ad-hoc signed, not notarised. If a browser downloaded one,
+            clear the quarantine flag once:
+            ```
+            xattr -d com.apple.quarantine ./adesk-pro-osx-arm64
+            chmod +x ./adesk-pro-osx-arm64
+            ```
+            Then grant **Accessibility** permission when prompted (System Settings › Privacy &
+            Security › Accessibility), and run `adesk-pro install-mcp` to wire it into your agent.
+
+  npm:
+    needs: build
+    # Tags publish; a manual run publishes only when explicitly asked.
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish_npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+          pattern: npm-*
+
+      - name: Merge staged platform packages into the repo tree
+        run: |
+          for dir in npm/adesk-pro-darwin-arm64 npm/adesk-pro-darwin-x64 npm/adesk-pro-win32-x64; do
+            name=$(basename "$dir")
+            src="staged/npm-$name"
+            if [ ! -d "$src" ]; then
+              echo "::error::no staged package for $name"
+              ls -R staged
+              exit 1
+            fi
+            mkdir -p "$dir"
+            cp -R "$src/." "$dir/"
+            ls -la "$dir/bin"
+          done
+
+      - name: Launcher tests
+        run: node npm/adesk-pro/test/launcher.test.js
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node npm/publish.js

@@ -1,0 +1,48 @@
+{
+  "name": "adesk-pro",
+  "version": "0.2.0",
+  "description": "Desktop use for AI agents through the OS accessibility tree — no screenshots, no vision model. MCP server + CLI for Windows and macOS.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "desktop-automation",
+    "accessibility",
+    "ui-automation",
+    "uiautomation",
+    "macos",
+    "windows",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "ProcessMonitor",
+  "homepage": "https://github.com/ProcessMonitor/adesk-pro",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ProcessMonitor/adesk-pro.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ProcessMonitor/adesk-pro/issues"
+  },
+  "bin": {
+    "adesk-pro": "bin/adesk-pro.js"
+  },
+  "files": [
+    "bin/adesk-pro.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "win32"
+  ],
+  "optionalDependencies": {
+    "adesk-pro-darwin-arm64": "0.2.0",
+    "adesk-pro-darwin-x64": "0.2.0",
+    "adesk-pro-win32-x64": "0.2.0"
+  },
+  "scripts": {
+    "test": "node test/launcher.test.js"
+  }
+}
