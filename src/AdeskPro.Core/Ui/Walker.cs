@@ -106,6 +106,7 @@ public static class Walker
                     Hwnd = n.Hwnd,
                     RuntimeId = n.RuntimeId,
                     Role = n.Role,
+                    RoleId = n.RoleId,
                     Name = n.Name,
                     AutomationId = n.AutomationId,
                     ClassName = n.ClassName,

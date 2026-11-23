@@ -8,16 +8,27 @@ namespace AdeskPro;
 /// <summary>Command implementations. Every handler returns one Envelope and touches the platform only through IPlatform.</summary>
 public static partial class Handlers
 {
-    public static Envelope Status(Args a, Session s) => Envelope.Good(new JsonObject
+    public static Envelope Status(Args a, Session s)
     {
-        ["command"] = "status",
-        ["platform"] = s.Platform.PlatformName,
-        ["version"] = Version.Value,
-        ["session"] = s.Name,
-        ["stateMode"] = s.InMemory ? "memory" : "disk",
-        ["storeDir"] = s.InMemory ? null : SessionStore.Dir(s.Name),
-        ["snapshotCount"] = CountSnapshots(s),
-    });
+        var data = new JsonObject
+        {
+            ["command"] = "status",
+            ["platform"] = s.Platform.PlatformName,
+            ["version"] = Version.Value,
+            ["session"] = s.Name,
+            ["stateMode"] = s.InMemory ? "memory" : "disk",
+            ["storeDir"] = s.InMemory ? null : SessionStore.Dir(s.Name),
+            ["snapshotCount"] = CountSnapshots(s),
+        };
+        var diagnostics = s.Platform.Diagnostics();
+        if (diagnostics.Count > 0)
+        {
+            var diag = new JsonObject();
+            foreach (var (key, value) in diagnostics) diag[key] = value;
+            data["diagnostics"] = diag;
+        }
+        return Envelope.Good(data);
+    }
 
     public static Envelope ListApps(Args a, Session s)
     {
@@ -172,7 +183,7 @@ public static partial class Handlers
                         result.Refs[index] = new RefEntry
                         {
                             Pid = n.Pid, Hwnd = n.Hwnd, RuntimeId = n.RuntimeId,
-                            Role = n.Role, Name = n.Name, AutomationId = n.AutomationId,
+                            Role = n.Role, RoleId = n.RoleId, Name = n.Name, AutomationId = n.AutomationId,
                             ClassName = n.ClassName, ScopePath = n.ScopePath, Patterns = n.Patterns,
                             CapturedUnique = false, Rect = [n.Rect.X, n.Rect.Y, n.Rect.W, n.Rect.H],
                             WindowName = info.Name,
@@ -273,7 +284,7 @@ public static partial class Handlers
             });
         }
         catch (NoPatternException ex) { return NoPattern(ex); }
-        catch (Exception ex) { return Internal(ex); }
+        catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
     }
 
     public static Envelope Scroll(Args a, Session s)
@@ -293,7 +304,7 @@ public static partial class Handlers
         var text = ReadText(a);
         if (text is null) return Envelope.Fail(ErrorCodes.InvalidArgs, "--text or --stdin is required");
         try { s.Platform.ClipboardSet(text); return Envelope.Good(new JsonObject { ["command"] = "clipboard-set" }); }
-        catch (Exception ex) { return Internal(ex); }
+        catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
     }
 
     // --- shared plumbing ---
@@ -340,7 +351,7 @@ public static partial class Handlers
                 return Envelope.Good(data);
             }
             catch (NoPatternException ex) { return NoPattern(ex); }
-            catch (Exception ex) { return Internal(ex); }
+            catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
         });
     }
 
@@ -392,12 +403,16 @@ public static partial class Handlers
                 })]),
             });
 
-    private static Envelope Internal(Exception ex) =>
+    private static Envelope Internal(Exception ex, bool mayHaveDelivered = false) =>
         Envelope.Fail(ErrorCodes.Internal, ex.GetType().Name + ": " + ex.Message,
             details: new JsonObject
             {
                 ["stack"] = string.Join('\n', (ex.StackTrace ?? "").Split('\n').Take(4)),
-            });
+            },
+            // An exception thrown after an input was synthesised may have landed. Reporting that as
+            // retry-safe would let an agent double-click or type twice.
+            delivery: mayHaveDelivered ? "possibly_delivered" : "not_delivered",
+            retry: mayHaveDelivered ? "unsafe" : "safe");
 
     private static string? ReadText(Args a)
     {

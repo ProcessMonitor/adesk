@@ -152,7 +152,7 @@ public sealed class UiASource : Walker.ISource
         return data;
     }
 
-    private static UiNodeData ReadCached(AutomationElement el)
+    private static UiNodeData? ReadCached(AutomationElement el)
     {
         try
         {
@@ -165,7 +165,7 @@ public sealed class UiASource : Walker.ISource
         }
         catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException)
         {
-            return null!; // no active cache on this reference — caller falls back to Current
+            return null; // no active cache on this reference — caller falls back to Current
         }
     }
 
@@ -193,6 +193,7 @@ public sealed class UiASource : Walker.ISource
         return new UiNodeData
         {
             Role = string.IsNullOrEmpty(localized) ? ct?.ProgrammaticName ?? "custom" : localized,
+            RoleId = ct?.ProgrammaticName ?? "custom",
             Name = name ?? "",
             AutomationId = automationId ?? "",
             ClassName = className ?? "",
@@ -204,7 +205,7 @@ public sealed class UiASource : Walker.ISource
         };
     }
 
-    private static UiNodeData Dead() => new() { Role = "unavailable", IsOffscreen = true };
+    private static UiNodeData Dead() => new() { Role = "unavailable", RoleId = "unavailable", IsOffscreen = true };
 
     /// <summary>Pattern names an element supports, for envelope display and capability checks.</summary>
     public static IReadOnlyList<string> PatternsOf(AutomationElement el)
@@ -324,20 +325,26 @@ public sealed class UiASource : Walker.ISource
 
         AutomationElement? runtimeMatch = null;
         var identityMatches = new List<AutomationElement>();
+        // Cache identity properties for the whole subtree walk: without this every probe is a
+        // separate cross-process COM round trip, which is what makes re-resolution slow on big trees.
+        // The TreeWalker overloads take the CacheRequest directly, so no push/pop is needed.
         try
         {
+            var cache = BuildCache();
+            cache.TreeScope = TreeScope.Subtree;
+
             void Scan(AutomationElement node, int depth)
             {
                 if (depth > 40 || runtimeMatch is not null) return;
-                AutomationElement? child = View.GetFirstChild(node);
+                AutomationElement? child = View.GetFirstChild(node, cache);
                 var guard = 0;
                 while (child is not null && guard++ < 3000)
                 {
                     if (RuntimeIdEquals(child, entry.RuntimeId)) runtimeMatch = child;
-                    if (MatchesIdentity(child, entry)) identityMatches.Add(child);
+                    if (MatchesIdentityCached(child, entry)) identityMatches.Add(child);
                     Scan(child, depth + 1);
                     if (runtimeMatch is not null) return;
-                    child = View.GetNextSibling(child);
+                    child = View.GetNextSibling(child, cache);
                 }
             }
             Scan(window, 0);
@@ -354,6 +361,26 @@ public sealed class UiASource : Walker.ISource
             throw new AmbiguousTargetException(
                 $"{identityMatches.Count} live elements match the saved identity");
         return null;
+    }
+
+    /// <summary>Identity check that reads cached properties only.</summary>
+    private static bool MatchesIdentityCached(AutomationElement el, RefEntry entry)
+    {
+        try
+        {
+            var c = el.Cached;
+            if (c.ProcessId != entry.Pid) return false;
+            if (!string.Equals(c.AutomationId, entry.AutomationId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(c.Name ?? "", entry.Name, StringComparison.Ordinal)) return false;
+            if (!string.Equals(c.ClassName ?? "", entry.ClassName, StringComparison.Ordinal)) return false;
+            if (entry.RoleId.Length > 0)
+                return string.Equals(RoleIdOf(c.ControlType), entry.RoleId, StringComparison.Ordinal);
+            return string.Equals(c.LocalizedControlType ?? "", entry.Role, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>IPlatform.Resolve: re-resolves a saved ref to a semantic live element.</summary>
@@ -385,17 +412,21 @@ public sealed class UiASource : Walker.ISource
         try
         {
             var c = el.Current;
-            return c.ProcessId == entry.Pid
-                && string.Equals(c.AutomationId, entry.AutomationId, StringComparison.Ordinal)
-                && string.Equals(c.Name ?? "", entry.Name, StringComparison.Ordinal)
-                && string.Equals(c.ClassName ?? "", entry.ClassName, StringComparison.Ordinal)
-                && RoleOf(c.ControlType, c.LocalizedControlType) == entry.Role;
+            if (c.ProcessId != entry.Pid) return false;
+            if (!string.Equals(c.AutomationId, entry.AutomationId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(c.Name ?? "", entry.Name, StringComparison.Ordinal)) return false;
+            if (!string.Equals(c.ClassName ?? "", entry.ClassName, StringComparison.Ordinal)) return false;
+            // Match the stable control-type name, never the localised label: snapshots taken under
+            // one UI language must still resolve after the language pack changes. Snapshots written
+            // before RoleId existed fall back to comparing the localised label they saved.
+            if (entry.RoleId.Length > 0)
+                return string.Equals(RoleIdOf(c.ControlType), entry.RoleId, StringComparison.Ordinal);
+            return string.Equals(c.LocalizedControlType ?? "", entry.Role, StringComparison.Ordinal);
         }
         catch (ElementNotAvailableException) { return false; }
     }
 
-    private static string RoleOf(ControlType? ct, string localized) =>
-        string.IsNullOrEmpty(localized) ? ct?.ProgrammaticName ?? "custom" : localized;
+    private static string RoleIdOf(ControlType? ct) => ct?.ProgrammaticName ?? "custom";
 
     private static AutomationElement? Descend(AutomationElement window, List<int> scopePath)
     {

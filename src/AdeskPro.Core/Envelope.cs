@@ -52,11 +52,19 @@ public static class EnvelopeJson
 
     public static string Serialize(Envelope envelope) => JsonSerializer.Serialize(envelope, Options);
 
-    /// <summary>Short one-line human summary for MCP text content — never the full envelope again.</summary>
+    /// <summary>Short one-line human summary for MCP text content — never the full envelope again.
+    /// Errors keep their suggestion: a text-only agent has no other way to see how to recover.</summary>
     public static string Summarize(Envelope envelope)
     {
         if (envelope.Error is not null)
-            return $"error {envelope.Error.Code}: {envelope.Error.Message}";
+        {
+            var summary = $"error {envelope.Error.Code}: {envelope.Error.Message}";
+            if (!string.IsNullOrWhiteSpace(envelope.Error.Suggestion))
+                summary += $" — {envelope.Error.Suggestion}";
+            if (envelope.Error.Disposition.Retry != "safe")
+                summary += $" (retry: {envelope.Error.Disposition.Retry})";
+            return summary;
+        }
         var data = envelope.Data;
         if (data is null) return "ok";
         if (data.TryGetPropertyValue("snapshotId", out var sid) && sid is not null

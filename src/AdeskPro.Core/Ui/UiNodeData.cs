@@ -3,6 +3,10 @@
 public sealed class UiNodeData
 {
     public required string Role { get; set; }
+    /// <summary>Stable, machine-independent role id (Windows: "ControlType.Button"; macOS: AXRole).
+    /// <see cref="Role"/> is the human/localised label and must never be used for identity, or every
+    /// ref goes stale the moment the OS language pack changes.</summary>
+    public string RoleId { get; set; } = "";
     public string Name { get; set; } = "";
     public string AutomationId { get; set; } = "";
     public string ClassName { get; set; } = "";
@@ -20,11 +24,12 @@ public sealed class UiNodeData
     public int ChildCount { get; set; }      // reported instead of Children when skeleton-cut
     public bool SkeletonCut { get; set; }
     public string? Ref { get; set; }
-    /// <summary>Live UIA element behind this node; null in test fakes.</summary>
+    /// <summary>Live native element behind this node; null in test fakes.</summary>
     public object? Raw { get; set; }
 
     public bool IsInteractive => Patterns.Count > 0 || IsKeyboardFocusable;
 
-    /// <summary>Identity key used for uniqueness counting and live re-resolution.</summary>
-    public string IdentityKey => $"{Pid}|{Role}|{AutomationId}|{Name}|{ClassName}";
+    /// <summary>Identity key used for uniqueness counting and live re-resolution. Uses
+    /// <see cref="RoleId"/> so it survives a language pack change.</summary>
+    public string IdentityKey => $"{Pid}|{RoleId}|{AutomationId}|{Name}|{ClassName}";
 }

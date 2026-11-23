@@ -14,6 +14,9 @@ public sealed class RefEntry
     [JsonPropertyName("windowName")] public string WindowName { get; set; } = "";
     [JsonPropertyName("runtimeId")] public int[] RuntimeId { get; set; } = [];
     [JsonPropertyName("role")] public string Role { get; set; } = "";
+    /// <summary>Stable machine role id captured at snapshot time. Empty for snapshots written by
+    /// older builds; identity matching then falls back to <see cref="Role"/>.</summary>
+    [JsonPropertyName("roleId")] public string RoleId { get; set; } = "";
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("automationId")] public string AutomationId { get; set; } = "";
     [JsonPropertyName("className")] public string ClassName { get; set; } = "";
@@ -22,7 +25,8 @@ public sealed class RefEntry
     [JsonPropertyName("capturedUnique")] public bool CapturedUnique { get; set; }
     [JsonPropertyName("rect")] public int[] Rect { get; set; } = [];
 
-    public string IdentityKey => $"{Pid}|{Role}|{AutomationId}|{Name}|{ClassName}";
+    public string IdentityKey =>
+        $"{Pid}|{(RoleId.Length > 0 ? RoleId : Role)}|{AutomationId}|{Name}|{ClassName}";
 }
 
 /// <summary>
@@ -34,6 +38,9 @@ public sealed class RefStore
     private const int MaxSnapshots = 50;
     private readonly string? _dir;
     private readonly Dictionary<string, Dictionary<int, RefEntry>> _memory = new();
+    /// <summary>Insertion order, so "latest" means the most recently written snapshot —
+    /// snapshot ids are random tokens, not sortable.</summary>
+    private readonly List<string> _memoryOrder = new();
 
     public RefStore(string? dir) { _dir = dir; }
 
@@ -44,7 +51,7 @@ public sealed class RefStore
     {
         get
         {
-            if (_memory.Count > 0) return _memory.Keys.MaxBy(sid => sid.Length == 0 ? 0 : 0) ?? _memory.Keys.Last();
+            if (_memory.Count > 0) return _memoryOrder[^1];
             if (_dir is null) return null;
             var latest = Path.Combine(_dir, "latest.txt");
             return File.Exists(latest) ? File.ReadAllText(latest).Trim() : null;
@@ -53,6 +60,9 @@ public sealed class RefStore
 
     public void Save(string snapshotId, Dictionary<int, RefEntry> entries)
     {
+        // Re-writing an existing id moves it to the end: "latest" must follow write order.
+        _memoryOrder.Remove(snapshotId);
+        _memoryOrder.Add(snapshotId);
         _memory[snapshotId] = entries;
         if (_dir is null) { PruneMemory(); return; }
         var path = PathFor(_dir, snapshotId);
@@ -79,9 +89,10 @@ public sealed class RefStore
 
     private void PruneMemory()
     {
-        while (_memory.Count > MaxSnapshots)
+        while (_memoryOrder.Count > MaxSnapshots)
         {
-            var oldest = _memory.Keys.First();
+            var oldest = _memoryOrder[0];
+            _memoryOrder.RemoveAt(0);
             _memory.Remove(oldest);
         }
     }

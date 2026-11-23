@@ -80,6 +80,30 @@ public sealed class WindowsPlatform : IPlatform
     public void MouseClick(int x, int y, bool right, bool doubleClick) => Actions.MouseClick(x, y, right, doubleClick);
     public void Hover(int x, int y) => Actions.Hover(x, y);
     public void Drag(int fromX, int fromY, int toX, int toY) => Actions.Drag(fromX, fromY, toX, toY);
+
+    /// <summary>Surfaces the two misconfigurations that produce a silent empty desktop: a tool running
+    /// at a different integrity level than the target, and an empty session.</summary>
+    public IReadOnlyList<(string Key, string Value)> Diagnostics()
+    {
+        var list = new List<(string, string)>
+        {
+            ("sessionId", Environment.ProcessId.ToString()),
+            ("uiaLevel", "same-integrity-required"),
+            ("note", "a target app running elevated (as admin) is invisible to a non-elevated adesk-pro"),
+        };
+        try
+        {
+            var count = UiASource.TopWindows().Count;
+            list.Add(("topLevelWindows", count.ToString()));
+            if (count == 0)
+                list.Add(("warning", "no top-level windows visible — the terminal and the target app must run at the same integrity level"));
+        }
+        catch (Exception ex)
+        {
+            list.Add(("error", ex.GetType().Name + ": " + ex.Message));
+        }
+        return list;
+    }
 }
 
 /// <summary>One live UIA element behind the semantic ILiveElement surface.</summary>

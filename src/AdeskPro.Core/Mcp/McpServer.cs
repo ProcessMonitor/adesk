@@ -172,7 +172,7 @@ public static class Catalog
                         _ => "string",
                     },
                 };
-                properties[$"--{f.Name}".TrimStart('-')] = schema;
+                properties[f.Name] = schema;
                 if (f.Required) required.Add(JsonValue.Create(f.Name));
             }
             tools.Add(new JsonObject

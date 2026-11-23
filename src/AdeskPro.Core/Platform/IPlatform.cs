@@ -66,6 +66,21 @@ public interface IPlatform
     void MouseClick(int x, int y, bool right, bool doubleClick);
     void Hover(int x, int y);
     void Drag(int fromX, int fromY, int toX, int toY);
+
+    /// <summary>Health facts an agent (or a human running <c>status</c>) needs before blaming the
+    /// tool: permissions granted, target reachable, whether the tree is even readable.
+    /// Keys are stable identifiers; values are human-readable.</summary>
+    IReadOnlyList<(string Key, string Value)> Diagnostics() => [];
+
+    /// <summary>Asks the OS for the permission this platform needs before touching another app's
+    /// accessibility tree (macOS: the Accessibility grant). Called only for commands that declare
+    /// <see cref="CommandSpec.NeedsAccessibility"/>, so status/help/list commands never pop a
+    /// permission dialog. Default no-op: Windows needs no per-process grant.</summary>
+    void RequestAccessibility() { }
+
+    /// <summary>Releases native handles a command produced. Default no-op; adapters that hold
+    /// unmanaged references (macOS AXUIElement, Windows COM) override it.</summary>
+    void ReleaseCommandResources() { }
 }
 
 public sealed class LiveResolve

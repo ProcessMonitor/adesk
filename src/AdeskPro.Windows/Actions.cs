@@ -162,6 +162,8 @@ public static class Actions
     private const uint MouseEventfLeftUp = 0x0004;
     private const uint MouseEventfRightDown = 0x0008;
     private const uint MouseEventfRightUp = 0x0010;
+    private const uint MouseEventfAbsolute = 0x8000;
+    private const uint MouseEventfVirtualDesk = 0x4000;
 
     public static void Hover(int x, int y)
     {
@@ -191,7 +193,10 @@ public static class Actions
         var steps = Math.Max(8, (Math.Abs(toX - fromX) + Math.Abs(toY - fromY)) / 20);
         for (var i = 1; i <= steps; i++)
         {
-            Send([MouseMoveInput(fromX + (toX - fromX) * i / steps, fromY + (toY - fromY) * i / steps)]);
+            // Absolute move, normalized to the virtual-screen range the API expects (0..65535).
+            // Relative MOUSEEVENTF_MOVE would treat screen pixels as a delta and fling the cursor away.
+            Send([MouseMoveAbsoluteInput(fromX + (toX - fromX) * i / steps,
+                fromY + (toY - fromY) * i / steps)]);
             Thread.Sleep(10);
         }
         Send([MouseInput(MouseEventfLeftUp)]);
@@ -206,14 +211,32 @@ public static class Actions
         },
     };
 
-    private static INPUT MouseMoveInput(int x, int y) => new()
+    /// <summary>Absolute move across the virtual desktop: coordinates are normalized to 0..65535,
+    /// which is what <c>MOUSEEVENTF_ABSOLUTE</c> expects.</summary>
+    private static INPUT MouseMoveAbsoluteInput(int x, int y) => new()
     {
-        Type = 2,
+        Type = 0,
         U = new InputUnion
         {
-            Mi = new MOUSEINPUT { Dx = x, Dy = y, MouseData = 0, Flags = MouseEventfMove, Time = 0, ExtraInfo = IntPtr.Zero },
+            Mi = new MOUSEINPUT
+            {
+                Dx = NormalizeForAbsolute(x, SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenLeft),
+                Dy = NormalizeForAbsolute(y, SystemParameters.VirtualScreenHeight, SystemParameters.VirtualScreenTop),
+                MouseData = 0,
+                Flags = MouseEventfMove | MouseEventfAbsolute | MouseEventfVirtualDesk,
+                Time = 0,
+                ExtraInfo = IntPtr.Zero,
+            },
         },
     };
+
+    /// <summary>Maps a virtual-desktop pixel coordinate into the 0..65535 absolute input space.</summary>
+    private static int NormalizeForAbsolute(int value, double extent, double origin)
+    {
+        if (extent <= 0) return 0;
+        var normalized = (value - origin) * 65535.0 / extent;
+        return (int)Math.Clamp(Math.Round(normalized), 0, 65535);
+    }
 
     private static ushort MapKey(string name)
     {

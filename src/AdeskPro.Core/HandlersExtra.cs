@@ -30,8 +30,14 @@ public static partial class Handlers
             switch (flag.Kind)
             {
                 case FlagKind.Flag:
+                    // Accept real booleans and the strings clients actually send ("true"/"false"),
+                    // so {"i": "false"} does not silently switch the filter on.
                     if (value is JsonValue bv && bv.TryGetValue<bool>(out var b)) args.Set(flag.Name, b);
-                    else args.Set(flag.Name, true);
+                    else if (value is JsonValue svb && svb.TryGetValue<string>(out var sb) && bool.TryParse(sb, out var parsedBool))
+                        args.Set(flag.Name, parsedBool);
+                    else if (value is not null)
+                        return Envelope.Fail(ErrorCodes.InvalidArgs,
+                            $"--{key} expects true or false, got {value.ToJsonString()}");
                     break;
                 case FlagKind.Integer:
                     if (value is JsonValue iv && iv.TryGetValue<int>(out var n)) args.Set(flag.Name, n);
@@ -125,11 +131,15 @@ public static partial class Handlers
                         });
                     Thread.Sleep(300);
                 }
-                return Envelope.Good(new JsonObject
-                {
-                    ["command"] = "wait", ["kind"] = "ref", ["until"] = until,
-                    ["result"] = "timeout", ["timeout"] = timeout,
-                });
+                // A timeout is a failure, not a success with a note: an agent that treats it as
+                // ok will keep acting on a window/element that never showed up.
+                return Envelope.Fail(ErrorCodes.Timeout,
+                    $"a ref did not become '{until}' within {timeout}ms",
+                    "the app may be slower than the budget; raise --timeout, or snapshot again to see the live tree",
+                    details: new JsonObject
+                    {
+                        ["command"] = "wait", ["kind"] = "ref", ["until"] = until, ["timeout"] = timeout,
+                    });
             }
             if (!string.IsNullOrWhiteSpace(a.Str("app")))
             {
@@ -146,11 +156,13 @@ public static partial class Handlers
                         });
                     Thread.Sleep(300);
                 }
-                return Envelope.Good(new JsonObject
-                {
-                    ["command"] = "wait", ["kind"] = "window", ["app"] = app,
-                    ["result"] = "timeout", ["timeout"] = timeout,
-                });
+                return Envelope.Fail(ErrorCodes.Timeout,
+                    $"no window matching '{app}' appeared within {timeout}ms",
+                    "run 'adesk-pro list-apps' to see the windows that do exist, then match on --app/--pid",
+                    details: new JsonObject
+                    {
+                        ["command"] = "wait", ["kind"] = "window", ["app"] = app, ["timeout"] = timeout,
+                    });
             }
             return Envelope.Fail(ErrorCodes.InvalidArgs, "wait needs --app or --ref");
         }
@@ -307,7 +319,7 @@ public static partial class Handlers
                 ["disposition"] = new JsonObject { ["delivery"] = "delivered", ["retry"] = "unsafe" },
             });
         }
-        catch (Exception ex) { return Internal(ex); }
+        catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
     }
 
     public static Envelope Hover(Args a, Session s)
@@ -317,7 +329,7 @@ public static partial class Handlers
             s.Platform.Hover(a.Int("x"), a.Int("y"));
             return Envelope.Good(new JsonObject { ["command"] = "hover", ["x"] = a.Int("x"), ["y"] = a.Int("y") });
         }
-        catch (Exception ex) { return Internal(ex); }
+        catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
     }
 
     public static Envelope Drag(Args a, Session s)
@@ -334,7 +346,151 @@ public static partial class Handlers
                 ["disposition"] = new JsonObject { ["delivery"] = "delivered", ["retry"] = "unsafe" },
             });
         }
-        catch (Exception ex) { return Internal(ex); }
+        catch (Exception ex) { return Internal(ex, mayHaveDelivered: true); }
+    }
+
+    // --- self-check ---
+
+    /// <summary>One command that answers "why can't the agent see anything?" before the user
+    /// has to guess at permissions, session mismatches or an empty tree.</summary>
+    public static Envelope Doctor(Args a, Session s)
+    {
+        var checks = new JsonObject();
+        var problems = new JsonArray();
+        checks["platform"] = s.Platform.PlatformName;
+        checks["version"] = Version.Value;
+
+        foreach (var (key, value) in s.Platform.Diagnostics())
+        {
+            checks[key] = value;
+            if (key is "warning" or "error") problems.Add(value);
+        }
+
+        try
+        {
+            var windows = s.Platform.ListTopWindows();
+            checks["visibleWindows"] = windows.Count;
+            if (windows.Count == 0)
+                problems.Add("no visible top-level windows — check permissions and that the target app is running");
+            else
+                checks["sampleWindows"] = new JsonArray([.. windows.Take(5).Select(w => (JsonNode)new JsonObject
+                {
+                    ["name"] = w.Name, ["pid"] = w.Pid, ["process"] = w.ProcessName,
+                })]);
+        }
+        catch (Exception ex)
+        {
+            checks["listWindowsError"] = ex.GetType().Name + ": " + ex.Message;
+            problems.Add("listing windows failed: " + ex.Message);
+        }
+
+        return Envelope.Good(new JsonObject
+        {
+            ["command"] = "doctor",
+            ["healthy"] = problems.Count == 0,
+            ["checks"] = checks,
+            ["problems"] = problems,
+        });
+    }
+
+    // --- MCP config generation ---
+
+    /// <summary>Set by the npm launcher so the binary knows it was reached through npm.
+    /// The value is the npm package name to emit in the generated config.</summary>
+    public const string LaunchContextEnvVar = "ADESK_PRO_NPM_LAUNCH";
+
+    /// <summary>
+    /// Emits an MCP server entry that points at <em>this running binary's</em> absolute path.
+    /// Hand-writing a path into a config file is the single most common way a first install fails,
+    /// so the binary writes it for you.
+    ///
+    /// When the npm launcher started this process, the snippet is emitted in <c>npx</c> form
+    /// instead. A hard-coded path into <c>node_modules</c> would break on the next npm upgrade —
+    /// the version-pinned platform directory stops existing.
+    /// </summary>
+    public static Envelope InstallMcp(Args a, Session s)
+    {
+        var client = string.IsNullOrWhiteSpace(a.Str("client")) ? "json" : a.Str("client").ToLowerInvariant();
+        if (client is not ("json" or "claude" or "cursor" or "zcode"))
+            return Envelope.Fail(ErrorCodes.InvalidArgs, $"unknown client '{client}'",
+                "use claude, cursor, zcode or json");
+
+        // The launcher marks the process; absent that mark we are the binary itself.
+        var npmPackage = Environment.GetEnvironmentVariable(LaunchContextEnvVar);
+        var viaNpm = !string.IsNullOrWhiteSpace(npmPackage);
+
+        var exe = Environment.ProcessPath;
+        if (!viaNpm && string.IsNullOrWhiteSpace(exe))
+            return Envelope.Fail(ErrorCodes.Internal, "cannot determine this binary's path",
+                "run the command from the binary itself, not from a tool that re-hosts it");
+
+        // npx form survives `npm update`; an absolute path goes stale.
+        var command = viaNpm ? "npx" : exe!;
+        var args = viaNpm
+            ? new JsonArray("-y", npmPackage, "mcp")
+            : new JsonArray("mcp");
+
+        var entry = new JsonObject
+        {
+            ["mcpServers"] = new JsonObject
+            {
+                ["adesk-pro"] = new JsonObject
+                {
+                    ["command"] = command,
+                    ["args"] = args,
+                },
+            },
+        };
+        var snippet = entry.ToJsonString(new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+        });
+
+        var destination = a.Str("write");
+        if (destination.Length > 0)
+        {
+            try
+            {
+                var full = Path.GetFullPath(destination);
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                if (File.Exists(full))
+                    return Envelope.Fail(ErrorCodes.InvalidArgs,
+                        $"'{full}' already exists",
+                        "merge the snippet below by hand, or pass a new --write path",
+                        details: new JsonObject { ["snippet"] = snippet });
+                File.WriteAllText(full, snippet);
+                return Envelope.Good(new JsonObject
+                {
+                    ["command"] = "install-mcp",
+                    ["client"] = client,
+                    ["via"] = viaNpm ? "npm" : "binary",
+                    ["command_"] = command,
+                    ["path"] = full,
+                    ["snippet"] = snippet,
+                    ["next"] = "restart your agent so it picks up the new config",
+                });
+            }
+            catch (Exception ex) { return Internal(ex); }
+        }
+
+        var hint = client switch
+        {
+            "claude" when viaNpm => $"claude mcp add adesk-pro -- npx -y {npmPackage} mcp",
+            "claude" => $"claude mcp add adesk-pro -- \"{exe}\" mcp",
+            "cursor" => "paste this under 'mcpServers' in ~/.cursor/mcp.json, then restart Cursor",
+            "zcode" => "paste this into your ZCode MCP configuration, then restart ZCode",
+            _ => "paste this into your client's mcpServers block, then restart the client",
+        };
+
+        return Envelope.Good(new JsonObject
+        {
+            ["command"] = "install-mcp",
+            ["client"] = client,
+            ["via"] = viaNpm ? "npm" : "binary",
+            ["command_"] = command,
+            ["snippet"] = snippet,
+            ["hint"] = hint,
+        });
     }
 
     // --- embedded agent guides ---
