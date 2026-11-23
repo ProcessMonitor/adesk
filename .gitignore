@@ -3,4 +3,12 @@ obj/
 *.user
 .vs/
 publish/
+out/
 *.log
+.dotnet/
+
+# Staged platform binaries are build outputs; npm/publish.js copies them in at release time.
+npm/adesk-pro-*/bin/adesk-pro
+npm/adesk-pro-*/bin/adesk-pro.exe
+# ...but the launcher lives in npm/adesk-pro/bin and must be committed.
+!npm/adesk-pro/bin/
